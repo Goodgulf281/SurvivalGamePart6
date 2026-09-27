@@ -18,9 +18,14 @@ namespace Goodgulf.TerrainUtils
             public Vector3 position;       // World position
             public Quaternion rotation;    // Rotation
             public Vector3 scale;          // Scale
-            
-            // Optional: Store if terrain was modified (for debugging/validation)
+
+            // True if placing this prefab modified the terrain. Replayed on cache load,
+            // because chunk heights are regenerated from the seed every time.
             public bool terrainModified;
+
+            // Index into PrefabPlacementConfig.placementRules of the rule that placed this
+            // prefab; needed to replay its terrain modification.
+            public int ruleIndex;
         }
         
         // Chunk identification
@@ -38,7 +43,9 @@ namespace Goodgulf.TerrainUtils
         // Current cache format version.
         // v2: placement seeds and prefab IDs use StableHash instead of
         //     GetInstanceID()/string.GetHashCode(), so v1 caches are stale.
-        public const int CurrentCacheVersion = 2;
+        // v3: records carry ruleIndex so terrain modifications are replayed on load;
+        //     the config hash also covers every rule field that affects placement.
+        public const int CurrentCacheVersion = 3;
 
         // Version for cache format changes
         public int cacheVersion = CurrentCacheVersion;

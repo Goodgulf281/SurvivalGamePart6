@@ -1,6 +1,6 @@
 // ============================================================
 // Script:      StableHash.cs
-// Description: Deterministic string hashing (FNV-1a, 32-bit).
+// Description: Deterministic hashing (FNV-1a, 32-bit) of strings and float grids.
 //              Unlike string.GetHashCode() or Object.GetInstanceID(),
 //              the result is identical across processes, platforms,
 //              editor and builds. Required so that every machine in a
@@ -33,6 +33,29 @@ namespace Goodgulf.TerrainUtils
                     char c = text[i];
                     hash = (hash ^ (byte)c) * FnvPrime;
                     hash = (hash ^ (byte)(c >> 8)) * FnvPrime;
+                }
+            }
+
+            return unchecked((int)hash);
+        }
+
+        /// <summary>
+        /// Returns the 32-bit FNV-1a hash of the raw bits of every value in <paramref name="values"/>.
+        /// Bit-exact: used to compare terrain heightmaps between machines.
+        /// </summary>
+        public static int Fnv1a(float[,] values)
+        {
+            uint hash = FnvOffsetBasis;
+
+            if (values != null)
+            {
+                foreach (float value in values)
+                {
+                    uint bits = unchecked((uint)System.BitConverter.SingleToInt32Bits(value));
+                    hash = (hash ^ (bits & 0xFF)) * FnvPrime;
+                    hash = (hash ^ ((bits >> 8) & 0xFF)) * FnvPrime;
+                    hash = (hash ^ ((bits >> 16) & 0xFF)) * FnvPrime;
+                    hash = (hash ^ (bits >> 24)) * FnvPrime;
                 }
             }
 

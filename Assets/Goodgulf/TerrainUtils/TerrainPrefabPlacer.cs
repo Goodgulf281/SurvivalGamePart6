@@ -119,11 +119,12 @@ namespace Goodgulf.TerrainUtils
             }
             
             // Process each placement rule
-            foreach (var rule in placementConfig.placementRules)
+            List<PrefabPlacementConfig.PrefabPlacementRule> rules = placementConfig.placementRules;
+            for (int ruleIndex = 0; ruleIndex < rules.Count; ruleIndex++)
             {
-                if (rule.prefab == null) continue;
+                if (rules[ruleIndex].prefab == null) continue;
                 
-                PlacePrefabsForRule(rule, chunkCoord, chunkWorldPos, chunkSize, chunkObjects, cache);
+                PlacePrefabsForRule(rules[ruleIndex], ruleIndex, chunkCoord, chunkWorldPos, chunkSize, chunkObjects, cache);
             }
             
             // Save cache if enabled
@@ -186,6 +187,7 @@ namespace Goodgulf.TerrainUtils
         /// </summary>
         private void PlacePrefabsForRule(
             PrefabPlacementConfig.PrefabPlacementRule rule,
+            int ruleIndex,
             Vector2Int chunkCoord,
             Vector3 chunkWorldPos,
             float chunkSize,
@@ -295,7 +297,8 @@ namespace Goodgulf.TerrainUtils
                         position = worldPos,
                         rotation = rotation,
                         scale = scale,
-                        terrainModified = terrainWillBeModified
+                        terrainModified = terrainWillBeModified,
+                        ruleIndex = ruleIndex
                     });
                 }
             }

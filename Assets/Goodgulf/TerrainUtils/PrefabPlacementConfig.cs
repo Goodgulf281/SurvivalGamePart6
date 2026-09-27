@@ -121,15 +121,40 @@ namespace Goodgulf.TerrainUtils
             hash = hash * 31 + edgeBufferDistance.GetHashCode();
             hash = hash * 31 + (preventPlacementNearEdges ? 1 : 0);
             
+            // Every field that changes placement output is hashed, so cached chunks never
+            // disagree with freshly generated ones. Rules without a prefab still add a slot,
+            // which keeps the cached ruleIndex values stable.
             foreach (var rule in placementRules)
             {
-                if (rule.prefab != null)
+                if (rule.prefab == null)
                 {
-                    hash = hash * 31 + StableHash.Fnv1a(rule.prefab.name);
-                    hash = hash * 31 + rule.density.GetHashCode();
-                    hash = hash * 31 + rule.terrainModificationRadius.GetHashCode();
-                    hash = hash * 31 + (int)rule.modificationType;
+                    hash = hash * 31;
+                    continue;
                 }
+
+                hash = hash * 31 + StableHash.Fnv1a(rule.prefab.name);
+                hash = hash * 31 + rule.density.GetHashCode();
+                hash = hash * 31 + (rule.randomRotationX ? 1 : 0);
+                hash = hash * 31 + (rule.randomRotationY ? 1 : 0);
+                hash = hash * 31 + (rule.randomRotationZ ? 1 : 0);
+                hash = hash * 31 + rule.fixedRotation.x.GetHashCode();
+                hash = hash * 31 + rule.fixedRotation.y.GetHashCode();
+                hash = hash * 31 + rule.fixedRotation.z.GetHashCode();
+                hash = hash * 31 + (rule.randomScale ? 1 : 0);
+                hash = hash * 31 + rule.minScale.GetHashCode();
+                hash = hash * 31 + rule.maxScale.GetHashCode();
+                hash = hash * 31 + rule.minSlope.GetHashCode();
+                hash = hash * 31 + rule.maxSlope.GetHashCode();
+                hash = hash * 31 + rule.minHeight.GetHashCode();
+                hash = hash * 31 + rule.maxHeight.GetHashCode();
+                hash = hash * 31 + rule.minSpacing.GetHashCode();
+                hash = hash * 31 + (rule.alignToTerrainNormal ? 1 : 0);
+                hash = hash * 31 + rule.surfaceOffset.GetHashCode();
+                hash = hash * 31 + (rule.modifyTerrain ? 1 : 0);
+                hash = hash * 31 + rule.terrainModificationRadius.GetHashCode();
+                hash = hash * 31 + (int)rule.modificationType;
+                hash = hash * 31 + rule.modificationSmoothness.GetHashCode();
+                hash = hash * 31 + rule.terrainHeightOffset.GetHashCode();
             }
             
             return hash;
