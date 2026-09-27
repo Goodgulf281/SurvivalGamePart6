@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Unity **6000.0.68f1** (Unity 6) project using URP, the new Input System, Cinemachine, Burst/Jobs/Collections/Mathematics. It is a YouTube tutorial series project (episode 5: https://youtu.be/49oQ7giICds) combining streamed procedural terrain, a player building system, and a custom Burst-accelerated A* grid pathfinder. Episode 6 (in progress) adds FishNet 4.x multiplayer; `PLAN.md` holds the phased plan, decisions (host/listen server, one networked object per `BuildingArea`, client-authoritative movement) and a checklist of what's done. Read it before any networking work and tick items off as they land.
 
-**FishNet is not in git.** `Networking/NetworkBootstrap.cs` references `FishNet.Managing` unconditionally, so a fresh checkout or worktree won't compile until FishNet is installed (commit `Assets/FishNet` or install from the Git URL in `PLAN.md`).
+FishNet 4.7.3 is committed under `Assets/FishNet` (third-party; don't edit it). `fishnet.md` is the FishNet reference guide that `PLAN.md` section numbers (§) point to.
+
+**Determinism check:** in Play Mode, press F9 (or use the `AsyncTerrainPrefabPlacer` context menu "Dump Placement Records") to write every loaded chunk's placement records and heightmap hash to `persistentDataPath/PlacementDumps[_<mppm id>]/`. Dumps from two players with the same seed must be identical.
 
 There is no command-line build, lint, or test setup: no asmdefs, no test assemblies (the Test Framework package is installed but unused). Compile and run by opening the project in the Unity Editor; main scene is `Assets/main scene.unity`. All project code lives in `Assets/Goodgulf/` under `Goodgulf.*` namespaces (a few files like `NonBuildableArea` and `PlayerBuilderInventoryBridge` sit in the global namespace). Everything else under `Assets/` is Unity/TextMesh Pro/template content.
 

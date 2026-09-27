@@ -1,6 +1,12 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
 using System.Threading.Tasks;
+using Goodgulf.Logging;
+using Goodgulf.Networking;
 
 namespace Goodgulf.TerrainUtils
 {
@@ -29,9 +35,20 @@ namespace Goodgulf.TerrainUtils
         
         [Tooltip("Use async cache saving (recommended for better performance)")]
         [SerializeField] private bool useAsyncCacheSaving = true;
-        
+
+        [Header("Determinism Debugging")]
+        [Tooltip("Press the dump key in Play Mode to write every loaded chunk's placement records and heightmap hash to a text file.")]
+        [SerializeField] private bool _enableDumpHotkey = true;
+        [SerializeField] private Key _dumpKey = Key.F9;
+
+        private const string DumpFolderName = "PlacementDumps";
+
         // Cache for placed objects per chunk
         private Dictionary<Vector2Int, List<GameObject>> placedObjectsPerChunk = new Dictionary<Vector2Int, List<GameObject>>();
+
+        // Placement records and terrain per loaded chunk, kept for the determinism dump
+        private Dictionary<Vector2Int, List<ChunkPrefabCache.PlacedPrefabData>> placedRecordsPerChunk = new Dictionary<Vector2Int, List<ChunkPrefabCache.PlacedPrefabData>>();
+        private Dictionary<Vector2Int, Terrain> terrainPerChunk = new Dictionary<Vector2Int, Terrain>();
         
         // Prefab registry for efficient lookups
         private Dictionary<int, GameObject> prefabRegistry = new Dictionary<int, GameObject>();
@@ -58,6 +75,14 @@ namespace Goodgulf.TerrainUtils
             }
         }
         
+        private void Update()
+        {
+            if (_enableDumpHotkey && Keyboard.current != null && Keyboard.current[_dumpKey].wasPressedThisFrame)
+            {
+                DumpPlacementRecords();
+            }
+        }
+
         private void OnDestroy()
         {
             // Shutdown async cache system
@@ -127,37 +152,45 @@ namespace Goodgulf.TerrainUtils
             }
             
             chunksLoading.Add(chunkCoord);
-            
+
             // Clear existing objects for this chunk if any
             ClearChunk(chunkCoord);
-            
+
+            // Pin this chunk's terrain before awaiting: the streaming controller loads several
+            // chunks concurrently and calls SetTerrain for each, so the field can change under us.
+            Terrain chunkTerrain = terrain;
+            terrainPerChunk[chunkCoord] = chunkTerrain;
+
             // Try to load from cache first (async)
             bool loadedFromCache = false;
             if (placementConfig.enablePersistentCache && useAsyncCacheLoading)
             {
-                loadedFromCache = await TryLoadFromCacheAsync(chunkCoord, chunkSize);
+                loadedFromCache = await TryLoadFromCacheAsync(chunkCoord, chunkTerrain);
             }
             else if (placementConfig.enablePersistentCache)
             {
                 // Fallback to sync loading
-                loadedFromCache = TryLoadFromCacheSync(chunkCoord, chunkSize);
+                loadedFromCache = TryLoadFromCacheSync(chunkCoord, chunkTerrain);
             }
-            
+
             if (loadedFromCache)
             {
                 cachedChunks.Add(chunkCoord);
                 chunksLoading.Remove(chunkCoord);
                 return;
             }
-            
+
             // Generate new placement data
             List<GameObject> chunkObjects = new List<GameObject>();
             placedObjectsPerChunk[chunkCoord] = chunkObjects;
-            
+
+            List<ChunkPrefabCache.PlacedPrefabData> records = new List<ChunkPrefabCache.PlacedPrefabData>();
+            placedRecordsPerChunk[chunkCoord] = records;
+
             // Calculate chunk world position
             Vector3 chunkWorldPos = new Vector3(chunkX * chunkSize, 0, chunkZ * chunkSize);
-            
-            // For caching: store placement data
+
+            // For caching: store placement data (shares the records list)
             ChunkPrefabCache cache = null;
             if (placementConfig.enablePersistentCache)
             {
@@ -167,18 +200,20 @@ namespace Goodgulf.TerrainUtils
                     chunkZ = chunkZ,
                     seed = baseSeed,
                     configHash = placementConfig.GetConfigHash(),
-                    timestamp = System.DateTime.UtcNow.Ticks
+                    timestamp = System.DateTime.UtcNow.Ticks,
+                    placedPrefabs = records
                 };
             }
-            
+
             // Process each placement rule (this is CPU-bound, stays on main thread)
-            foreach (var rule in placementConfig.placementRules)
+            List<PrefabPlacementConfig.PrefabPlacementRule> rules = placementConfig.placementRules;
+            for (int ruleIndex = 0; ruleIndex < rules.Count; ruleIndex++)
             {
-                if (rule.prefab == null) continue;
-                
-                PlacePrefabsForRule(rule, chunkCoord, chunkWorldPos, chunkSize, chunkObjects, cache);
+                if (rules[ruleIndex].prefab == null) continue;
+
+                PlacePrefabsForRule(rules[ruleIndex], ruleIndex, chunkTerrain, chunkCoord, chunkWorldPos, chunkSize, chunkObjects, records);
             }
-            
+
             // Save cache (async if enabled)
             if (placementConfig.enablePersistentCache && cache != null)
             {
@@ -209,7 +244,7 @@ namespace Goodgulf.TerrainUtils
         /// <summary>
         /// Try to load chunk from cache asynchronously.
         /// </summary>
-        private async Task<bool> TryLoadFromCacheAsync(Vector2Int chunkCoord, float chunkSize)
+        private async Task<bool> TryLoadFromCacheAsync(Vector2Int chunkCoord, Terrain chunkTerrain)
         {
             // Load cache from disk (async, on background thread)
             ChunkPrefabCache cache = await AsyncChunkCacheManager.LoadCacheAsync(chunkCoord.x, chunkCoord.y);
@@ -230,33 +265,17 @@ namespace Goodgulf.TerrainUtils
                 }
                 return false;
             }
-            
+
             // Instantiate prefabs from cached data (must be on main thread)
-            List<GameObject> chunkObjects = new List<GameObject>();
-            
-            foreach (var data in cache.placedPrefabs)
-            {
-                if (prefabRegistry.TryGetValue(data.prefabId, out GameObject prefab))
-                {
-                    GameObject instance = Instantiate(prefab, data.position, data.rotation, spawnParent);
-                    instance.transform.localScale = data.scale;
-                    chunkObjects.Add(instance);
-                }
-                else
-                {
-                    Debug.LogWarning($"Prefab with ID {data.prefabId} not found in registry");
-                }
-            }
-            
-            placedObjectsPerChunk[chunkCoord] = chunkObjects;
-            
+            RestoreFromCache(chunkCoord, chunkTerrain, cache);
+
             return true;
         }
-        
+
         /// <summary>
         /// Try to load chunk from cache synchronously (fallback).
         /// </summary>
-        private bool TryLoadFromCacheSync(Vector2Int chunkCoord, float chunkSize)
+        private bool TryLoadFromCacheSync(Vector2Int chunkCoord, Terrain chunkTerrain)
         {
             ChunkPrefabCache cache = AsyncChunkCacheManager.LoadCacheSync(chunkCoord.x, chunkCoord.y);
             
@@ -274,9 +293,22 @@ namespace Goodgulf.TerrainUtils
                 }
                 return false;
             }
-            
+
+            RestoreFromCache(chunkCoord, chunkTerrain, cache);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Instantiate a chunk's prefabs from a validated cache and replay their terrain
+        /// modifications in the original order, so the chunk ends up identical to a freshly
+        /// generated one (its heights are regenerated from the seed on every load).
+        /// </summary>
+        private void RestoreFromCache(Vector2Int chunkCoord, Terrain chunkTerrain, ChunkPrefabCache cache)
+        {
             List<GameObject> chunkObjects = new List<GameObject>();
-            
+            List<PrefabPlacementConfig.PrefabPlacementRule> rules = placementConfig.placementRules;
+
             foreach (var data in cache.placedPrefabs)
             {
                 if (prefabRegistry.TryGetValue(data.prefabId, out GameObject prefab))
@@ -285,11 +317,28 @@ namespace Goodgulf.TerrainUtils
                     instance.transform.localScale = data.scale;
                     chunkObjects.Add(instance);
                 }
+                else
+                {
+                    GameLogger.Warning($"Prefab with ID {data.prefabId} not found in registry", this);
+                }
+
+                if (data.terrainModified)
+                {
+                    // The config hash covers the rule list, so a valid cache's ruleIndex always
+                    // points at the rule that placed this prefab.
+                    if (data.ruleIndex >= 0 && data.ruleIndex < rules.Count && rules[data.ruleIndex].prefab != null)
+                    {
+                        ModifyTerrainAroundPrefab(chunkTerrain, data.position, rules[data.ruleIndex]);
+                    }
+                    else
+                    {
+                        GameLogger.Error($"Chunk {chunkCoord}: cached rule index {data.ruleIndex} is invalid; terrain modification not replayed", this);
+                    }
+                }
             }
-            
+
             placedObjectsPerChunk[chunkCoord] = chunkObjects;
-            
-            return true;
+            placedRecordsPerChunk[chunkCoord] = cache.placedPrefabs;
         }
         
         /// <summary>
@@ -298,11 +347,13 @@ namespace Goodgulf.TerrainUtils
         /// </summary>
         private void PlacePrefabsForRule(
             PrefabPlacementConfig.PrefabPlacementRule rule,
+            int ruleIndex,
+            Terrain chunkTerrain,
             Vector2Int chunkCoord,
             Vector3 chunkWorldPos,
             float chunkSize,
             List<GameObject> chunkObjects,
-            ChunkPrefabCache cache = null)
+            List<ChunkPrefabCache.PlacedPrefabData> records)
         {
             // Implementation same as TerrainPrefabPlacer.PlacePrefabsForRule
             
@@ -332,7 +383,7 @@ namespace Goodgulf.TerrainUtils
                 Vector3 worldPos = chunkWorldPos + new Vector3(localX, 0, localZ);
                 
                 // Sample terrain height and normal at this position
-                if (!SampleTerrain(worldPos, out float height, out Vector3 normal))
+                if (!SampleTerrain(chunkTerrain, worldPos, out float height, out Vector3 normal))
                 {
                     continue; // Position outside terrain bounds
                 }
@@ -393,25 +444,23 @@ namespace Goodgulf.TerrainUtils
                 // Modify terrain if enabled for this rule and not near edge
                 if (terrainWillBeModified)
                 {
-                    ModifyTerrainAroundPrefab(worldPos, rule);
+                    ModifyTerrainAroundPrefab(chunkTerrain, worldPos, rule);
                 }
-                
+
                 // Add to tracking lists
                 chunkObjects.Add(instance);
                 placedPositions.Add(worldPos);
-                
-                // Add to cache if enabled
-                if (cache != null)
+
+                // Record placement (saved to the cache and used by the determinism dump)
+                records.Add(new ChunkPrefabCache.PlacedPrefabData
                 {
-                    cache.placedPrefabs.Add(new ChunkPrefabCache.PlacedPrefabData
-                    {
-                        prefabId = prefabId,
-                        position = worldPos,
-                        rotation = rotation,
-                        scale = scale,
-                        terrainModified = terrainWillBeModified
-                    });
-                }
+                    prefabId = prefabId,
+                    position = worldPos,
+                    rotation = rotation,
+                    scale = scale,
+                    terrainModified = terrainWillBeModified,
+                    ruleIndex = ruleIndex
+                });
             }
 
         }
@@ -434,10 +483,10 @@ namespace Goodgulf.TerrainUtils
         /// <summary>
         /// Sample terrain height and normal at a world position.
         /// </summary>
-        private bool SampleTerrain(Vector3 worldPos, out float height, out Vector3 normal)
+        private bool SampleTerrain(Terrain chunkTerrain, Vector3 worldPos, out float height, out Vector3 normal)
         {
-            TerrainData terrainData = terrain.terrainData;
-            Vector3 terrainPos = terrain.GetPosition();
+            TerrainData terrainData = chunkTerrain.terrainData;
+            Vector3 terrainPos = chunkTerrain.GetPosition();
             
             // Convert world position to terrain-local position
             Vector3 localPos = worldPos - terrainPos;
@@ -456,7 +505,7 @@ namespace Goodgulf.TerrainUtils
             float normalizedZ = localPos.z / terrainData.size.z;
             
             // Sample height
-            height = terrain.SampleHeight(worldPos);
+            height = chunkTerrain.SampleHeight(worldPos);
             
             // Sample normal
             normal = terrainData.GetInterpolatedNormal(normalizedX, normalizedZ);
@@ -600,11 +649,12 @@ namespace Goodgulf.TerrainUtils
         /// Modify terrain height around a prefab placement.
         /// </summary>
         private void ModifyTerrainAroundPrefab(
+            Terrain chunkTerrain,
             Vector3 worldPos,
             PrefabPlacementConfig.PrefabPlacementRule rule)
         {
-            TerrainData terrainData = terrain.terrainData;
-            Vector3 terrainPos = terrain.GetPosition();
+            TerrainData terrainData = chunkTerrain.terrainData;
+            Vector3 terrainPos = chunkTerrain.GetPosition();
             
             // Convert world position to terrain-local position
             Vector3 localPos = worldPos - terrainPos;
@@ -790,7 +840,9 @@ namespace Goodgulf.TerrainUtils
                 objects.Clear();
                 placedObjectsPerChunk.Remove(chunkCoord);
             }
-            
+
+            placedRecordsPerChunk.Remove(chunkCoord);
+            terrainPerChunk.Remove(chunkCoord);
             cachedChunks.Remove(chunkCoord);
             chunksLoading.Remove(chunkCoord);
         }
@@ -967,7 +1019,83 @@ namespace Goodgulf.TerrainUtils
         {
             await AsyncChunkCacheManager.WaitForPendingSaves(timeoutMs);
         }
-        
+
+        // ===== Determinism Debugging =====
+
+        /// <summary>
+        /// Write every loaded chunk's placement records and heightmap hash to
+        /// <c>PlacementDumps/placement_&lt;instance&gt;_&lt;time&gt;.txt</c> (per MPPM player).
+        /// The content has no timestamps or machine-specific data, so dumps from two
+        /// machines with the same seed and config should be byte-identical; diff them.
+        /// Chunks that are still loading are skipped.
+        /// </summary>
+        /// <returns>The path of the written file, or null on failure.</returns>
+        [ContextMenu("Dump Placement Records")]
+        public string DumpPlacementRecords()
+        {
+            if (placementConfig == null)
+            {
+                GameLogger.Error("Cannot dump placement records: PrefabPlacementConfig is not assigned", this);
+                return null;
+            }
+
+            List<Vector2Int> chunks = new List<Vector2Int>(placedRecordsPerChunk.Keys);
+            chunks.RemoveAll(c => chunksLoading.Contains(c));
+            chunks.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
+
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"# seed={baseSeed} configHash={placementConfig.GetConfigHash()} cacheVersion={ChunkPrefabCache.CurrentCacheVersion} chunks={chunks.Count}");
+            sb.AppendLine("# per record: prefabId ruleIndex position rotation(xyzw) scale terrainModified");
+
+            int fromCache = 0;
+            foreach (Vector2Int chunk in chunks)
+            {
+                if (cachedChunks.Contains(chunk)) fromCache++;
+
+                string heightHash = "none";
+                if (terrainPerChunk.TryGetValue(chunk, out Terrain chunkTerrain) && chunkTerrain != null)
+                {
+                    TerrainData data = chunkTerrain.terrainData;
+                    int res = data.heightmapResolution;
+                    heightHash = StableHash.Fnv1a(data.GetHeights(0, 0, res, res)).ToString("X8", inv);
+                }
+
+                List<ChunkPrefabCache.PlacedPrefabData> records = placedRecordsPerChunk[chunk];
+                sb.AppendLine($"chunk {chunk.x},{chunk.y} records={records.Count} heights={heightHash}");
+
+                // Keep placement order: terrain modifications are order-dependent
+                foreach (var r in records)
+                {
+                    sb.AppendLine(string.Format(inv,
+                        "  {0} {1} ({2:F3},{3:F3},{4:F3}) ({5:F4},{6:F4},{7:F4},{8:F4}) ({9:F3},{10:F3},{11:F3}) {12}",
+                        r.prefabId, r.ruleIndex,
+                        r.position.x, r.position.y, r.position.z,
+                        r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w,
+                        r.scale.x, r.scale.y, r.scale.z,
+                        r.terrainModified ? 1 : 0));
+                }
+            }
+
+            try
+            {
+                string folder = PlayModeInstance.GetInstanceDataPath(DumpFolderName);
+                Directory.CreateDirectory(folder);
+
+                string instance = PlayModeInstance.IsVirtualPlayer ? PlayModeInstance.InstanceId : "main";
+                string path = Path.Combine(folder, $"placement_{instance}_{System.DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                File.WriteAllText(path, sb.ToString());
+
+                GameLogger.Info($"Dumped {chunks.Count} chunks ({fromCache} from cache) to {path}", this);
+                return path;
+            }
+            catch (System.Exception e)
+            {
+                GameLogger.Error($"Failed to write placement dump: {e.Message}", this);
+                return null;
+            }
+        }
+
 
     }
 }
