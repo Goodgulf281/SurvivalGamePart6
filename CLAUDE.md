@@ -31,7 +31,11 @@ Five subsystems, the first four coordinated at startup by `GameLogic/GameManager
 5. **Networking (`Networking/`)**: `NetworkBootstrap` (on the NetworkManager) picks host/server/client from command-line flags (`-host`/`-server`/`-client`, `-address`, `-port`), then Multiplayer Play Mode tags (`Host`/`Server`/`Client`), then an Inspector default. `PlayModeInstance` detects MPPM virtual players via reflection and gives each its own `TerrainPrefabCache_<id>` folder, so chunk caches aren't shared.
 
 ### Startup order
-`GameManager.Awake` disables the player and uses the scene camera. `GameManager.InitializeGameLogic()`, wired to the streaming controller's initial-load event in the scene, then enables the player, calls `Builder.Instance.CacheTerrains()` / `SetPlayer`, fires `OnTerrainReady`, and finally `TerrainGraphIntegration.Instance.InitializeListeners()` + `Initialize()`. Chunk events arriving before `Initialize()` are ignored.
+`GameManager.Awake` switches to the scene camera. Two things must then be ready, in either order:
+- **World:** `GameManager.InitializeGameLogic()`, wired to the streaming controller's `onInitialChunksLoaded` in the scene, marks the world ready and calls `Builder.Instance.CacheTerrains()`.
+- **Local player:** the player prefab is spawned by FishNet's PlayerSpawner. `ThirdPersonController.OnStartClient` (owner only) enables `PlayerInput` and calls `GameManager.RegisterLocalPlayer`, which makes the streaming controller follow the player (`SetStreamingTarget`).
+
+`GameManager.SetupLocalPlayer` then waits for the chunk under the player, snaps it onto `_groundMask`, releases movement, switches to the player camera (`OrbitCamera.SetTarget`), calls `Builder.SetPlayer`, and the first time fires `OnTerrainReady` and `TerrainGraphIntegration.Instance.InitializeListeners()` + `Initialize()`. Chunk events arriving before `Initialize()` are ignored. There is no scene player any more: the prefab can't hold scene references, so the owner resolves `OrbitCamera`/`BuilderInput` at spawn.
 
 ### Key cross-system contract
 After placing or destroying anything that should block pathing, call:

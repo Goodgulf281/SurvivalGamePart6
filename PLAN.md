@@ -29,8 +29,8 @@ Plan for making this project network-enabled with FishNet 4.x. Reference guide: 
 
 ## Phase 0: Groundwork
 
-- [ ] Put FishNet under version control: commit `Assets/FishNet`, or install through the Git URL (`https://github.com/FirstGearGames/FishNet.git?path=Assets/FishNet`).
-- [ ] Add Multiplayer Play Mode (`com.unity.multiplayer.playmode`) for testing a host and a client in the editor.
+- [x] Put FishNet under version control: commit `Assets/FishNet`, or install through the Git URL (`https://github.com/FirstGearGames/FishNet.git?path=Assets/FishNet`).
+- [x] Add Multiplayer Play Mode (`com.unity.multiplayer.playmode`) for testing a host and a client in the editor.
 - [x] Per-player chunk caches: `PlayModeInstance.GetInstanceDataPath` gives MPPM virtual players their own `TerrainPrefabCache_<id>` folder.
 - [x] `NetworkBootstrap` (on the NetworkManager): starts host, server or client from `-host`/`-server`/`-client` (plus `-address`, `-port`), then MPPM tags `Host`/`Server`/`Client`, then the Inspector default. Set the NetworkHudCanvas Auto Start Type to Disabled.
 - [x] Fix placement determinism in `AsyncTerrainPrefabPlacer` (and the older `TerrainPrefabPlacer`):
@@ -38,34 +38,57 @@ Plan for making this project network-enabled with FishNet 4.x. Reference guide: 
   - `prefabId` and `PrefabPlacementConfig.GetConfigHash()` also use `StableHash.Fnv1a` instead of `string.GetHashCode()`.
   - `ChunkPrefabCache.CurrentCacheVersion` is now 2, and `IsValid` rejects older caches.
   - Note: rules are identified by prefab *name*, so two different prefabs with the same name in one config would share a seed.
-- [ ] Verify determinism: start two editors with the same seed, dump the placed-prefab records for several chunks, and diff them.
+- [x] Verify determinism: start two editors with the same seed, dump the placed-prefab records for several chunks, and diff them.
+  - Dump: F9 or the "Dump Placement Records" context menu on `AsyncTerrainPrefabPlacer`.
+  - Fixed on the way: cache loads now replay terrain modifications, and each placement call pins its own terrain.
+  - Passed: (A) both caches cold, (B) one warm and one cold, (C) a fresh editor session. (D) a standalone build was not run.
 
 ## Phase 1: Connecting and spawning the player
 
 Goal: a host and one client walk around the same terrain.
 
+Code (done on `claude/phase1-networked-player`; needs the editor setup below before it can be tested):
+
+- [x] Convert `ThirdPersonController` to a `NetworkBehaviour`:
+  - `Update` returns unless `IsOwner` and movement has been released.
+  - `PlayerInput` is disabled in `Awake` and enabled in `OnStartClient` for the owner only (§27). Input callbacks only fire while it is enabled, so they need no separate guard.
+  - The `CharacterController` on non-owners is left to the `NetworkTransform` (Component Configuration).
+  - `orbitCamera` and `builderInput` can't be scene references on a prefab; the owner resolves them from `GameManager.PlayerCamera` and `BuilderInput.Instance`.
+- [x] Camera: one scene camera with `OrbitCamera`. `GameManager` calls `OrbitCamera.SetTarget(localPlayer)` and switches from the scene camera once the player is placed.
+- [x] Rework `GameManager`. Instead of `InitializeWorld()`/`OnLocalPlayerSpawned()`:
+  - `InitializeGameLogic()` (still wired to `onInitialChunksLoaded`) only marks the world ready and calls `Builder.CacheTerrains`.
+  - `RegisterLocalPlayer(player)` is called by the owner's `OnStartClient`; `UnregisterLocalPlayer` by `OnStopClient`.
+  - When both are ready, `SetupLocalPlayer` places the player, switches the camera, calls `Builder.SetPlayer`, then `OnTerrainReady` and the `TerrainGraphIntegration` initialization (once). Moving that to the server path is still Phase 5.
+- [x] Interim streaming target (Phase 2 generalizes it): `TerrainStreamingController.SetStreamingTarget(Transform)` and `IsChunkLoadedAt(Vector3)`. Its `player` field now holds the spawn point until the local player registers.
+- [x] Spawn safety:
+  - The local player is held (no gravity or movement) until the chunk under it has loaded locally.
+  - It is then snapped to the ground below (`GameManager._groundMask`) and released.
+  - [ ] The server picks spawn points on already-loaded chunks. For now, PlayerSpawner's Spawns should sit inside the initial load radius around the spawn point.
+- [x] `TerrainPositionObjects` skips missing entries (the player is no longer a scene object).
+
+Editor setup:
+
 - [ ] Add a NetworkManager scene object (start from `FishNet/Demos/Prefabs/NetworkManager.prefab`):
+  - Add `NetworkBootstrap` and set the HUD's Auto Start Type to Disabled.
   - ObserverManager with a **SceneCondition**.
-  - PlayerSpawner with **Add To Default Scene** checked.
+  - PlayerSpawner with **Add To Default Scene** checked, and a spawn point in **Spawns**.
   - The HUD, for starting host or client.
   - The NetworkManager must not carry a NetworkObject (§4).
+- [ ] Spawn point: an empty GameObject where players should appear. Assign it to `TerrainStreamingController.player` and to PlayerSpawner's Spawns.
 - [ ] Player prefab:
+  - Move the scene player into a prefab. Disable its `PlayerInput` component on the prefab.
   - Add `NetworkObject`, a client-authoritative `NetworkTransform` (Component Configuration = CharacterController) and a client-authoritative `NetworkAnimator`.
-  - Move the scene player into this prefab and assign it to PlayerSpawner.
-- [ ] Convert `ThirdPersonController` to a `NetworkBehaviour`:
-  - Guard `Update` and the input callbacks with `IsOwner`.
-  - Keep `PlayerInput` disabled on the prefab. Enable it in `OnStartClient` when `IsOwner` is true (§27).
-  - Disable the `CharacterController` on non-owners, or let the `NetworkTransform` configure it.
-- [ ] Camera:
-  - Keep one scene camera with `OrbitCamera`.
-  - In `OnStartClient`/`OnOwnershipClient`, the owner sets itself as the `OrbitCamera` target and switches `GameManager` from the scene camera to the player camera.
-- [ ] Rework `GameManager`:
-  - Split `InitializeGameLogic()` into `InitializeWorld()` (server and client: terrain ready, `Builder.CacheTerrains`) and `OnLocalPlayerSpawned(player)` (client: camera, `Builder.SetPlayer`, `OnTerrainReady`).
-  - Call `TerrainGraphIntegration` initialization from the server path only (Phase 5).
-- [ ] Spawn safety:
-  - Hold the local player's gravity and movement until the chunk under it has loaded locally.
-  - Snap it to the terrain height when released.
-  - The server picks spawn points on already-loaded chunks.
+  - Assign it to PlayerSpawner and delete the scene player.
+- [ ] `GameManager`: assign the streaming controller and set **Ground Mask** to the terrain layer (the same mask `TerrainPositionObjects` uses).
+- [ ] MPPM scenario: Player Tags `Host` and `Client`; Main Editor = `Host`, Virtual Editor = `Client`.
+
+Done when:
+
+- [ ] Host and client each see both players move smoothly, and each camera follows its own player.
+- [ ] Neither player falls through the terrain at spawn.
+- [ ] The F9 dumps from host and client still match.
+
+Expected until later phases: building is local to each player (Phase 3), and the host only streams terrain around its own player, so a distant client floats over unloaded ground on the host's screen (Phase 2).
 
 ## Phase 2: World sync
 

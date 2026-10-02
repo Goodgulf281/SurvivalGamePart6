@@ -42,6 +42,9 @@ namespace Goodgulf.TerrainUtils
             
             foreach (GameObject obj in objectsToBePlacedOnTerrain)
             {
+                // Entries go missing when objects leave the scene (e.g. the player is now spawned by the network)
+                if (obj == null) continue;
+
 #if TERRAIN_DEBUG                
                 this.LogVerbose($"Placing object {obj.name} with position {obj.transform.position}");
 #endif                
