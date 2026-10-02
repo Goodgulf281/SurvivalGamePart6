@@ -4,11 +4,19 @@
 // Description: Handles third-person movement, rotation, and
 //              running using Unity's New Input System.
 //              Pairs with OrbitCamera.cs.
+//
+//              Networked (FishNet): only the owner reads input and
+//              moves; remote copies are driven by a client-authoritative
+//              NetworkTransform/NetworkAnimator. The owner registers
+//              with GameManager, which releases movement once the
+//              terrain under the player has loaded.
 // Author:      YOUR NAME
 // Date:        2026-02-23
 // ============================================================
 
+using FishNet.Object;
 using Goodgulf.Building;
+using Goodgulf.GameLogic;
 using Goodgulf.Pathfinding;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -19,9 +27,10 @@ namespace Goodgulf.Controller
     /// Third-person character controller supporting walk, run, and
     /// smooth camera-relative movement via the New Input System.
     /// Requires a CharacterController component on the same GameObject.
+    /// Keep the PlayerInput component disabled on the prefab: it is enabled for the owner only.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
-    public class ThirdPersonController : MonoBehaviour
+    public class ThirdPersonController : NetworkBehaviour
     {
         // ── Inspector ────────────────────────────────────────────────
 
@@ -60,10 +69,10 @@ namespace Goodgulf.Controller
         [SerializeField] private LayerMask groundMask;
 
         [Header("References")]
-        [Tooltip("The orbit camera used to determine movement direction.")]
+        [Tooltip("The orbit camera used to determine movement direction. Resolved from GameManager.PlayerCamera at spawn if empty.")]
         [SerializeField] private OrbitCamera orbitCamera;
 
-        [Tooltip("The BuilderInput used to process the Build System's input.")]
+        [Tooltip("The BuilderInput used to process the Build System's input. Resolved from BuilderInput.Instance at spawn if empty.")]
         [SerializeField] private BuilderInput builderInput;
         
         
@@ -82,6 +91,10 @@ namespace Goodgulf.Controller
 
         private CharacterController _controller;
         private Animator _animator;
+        private PlayerInput _playerInput;
+
+        // Held until GameManager has placed the player on loaded terrain
+        private bool _movementEnabled;
 
         private Vector3 _velocity;          // Horizontal velocity (world space)
         private float   _verticalVelocity;  // Vertical (gravity + jump)
@@ -99,12 +112,51 @@ namespace Goodgulf.Controller
             // Animator is optional — controller works without it
             _animator   = GetComponent<Animator>();
 
-            if (orbitCamera == null)
-                Debug.LogWarning("[ThirdPersonController] OrbitCamera reference not set — movement will use world forward.");
+            // Input stays off until we know this client owns the player
+            if (TryGetComponent(out _playerInput))
+                _playerInput.enabled = false;
         }
+
+        // ── Network Lifecycle ────────────────────────────────────────
+
+        public override void OnStartClient()
+        {
+            if (!IsOwner)
+                return;
+
+            // A spawned prefab can't hold scene references, so resolve them here
+            if (orbitCamera == null && GameManager.Instance != null && GameManager.Instance.PlayerCamera != null)
+                GameManager.Instance.PlayerCamera.TryGetComponent(out orbitCamera);
+
+            if (builderInput == null)
+                builderInput = BuilderInput.Instance;
+
+            if (orbitCamera == null)
+                Debug.LogWarning("[ThirdPersonController] OrbitCamera not found — movement will use world forward.");
+
+            if (_playerInput != null)
+                _playerInput.enabled = true;
+
+            if (GameManager.Instance != null)
+                GameManager.Instance.RegisterLocalPlayer(this);
+            else
+                Debug.LogError("[ThirdPersonController] No GameManager in the scene — the local player will never be released.");
+        }
+
+        public override void OnStopClient()
+        {
+            if (IsOwner && GameManager.Instance != null)
+                GameManager.Instance.UnregisterLocalPlayer(this);
+        }
+
+        // ── Unity Lifecycle (continued) ──────────────────────────────
 
         private void Update()
         {
+            // Remote players are moved by their NetworkTransform
+            if (!IsOwner || !_movementEnabled)
+                return;
+
             CheckGround();
             HandleGravityAndJump();
             HandleMovement();
@@ -431,6 +483,18 @@ namespace Goodgulf.Controller
             _controller.enabled = false;
             transform.position = newPosition;
             _controller.enabled = true;
+
+            _velocity         = Vector3.zero;
+            _verticalVelocity = 0f;
+        }
+
+        /// <summary>
+        /// Holds or releases the player. While held, no gravity or movement is applied,
+        /// so a freshly spawned player can't fall through terrain that hasn't loaded yet.
+        /// </summary>
+        public void SetMovementEnabled(bool enabled)
+        {
+            _movementEnabled = enabled;
         }
 
         

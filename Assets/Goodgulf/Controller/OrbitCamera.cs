@@ -138,6 +138,21 @@ namespace Goodgulf.Controller
                 SetCursorLocked(Cursor.lockState != CursorLockMode.Locked);
         }
 
+        // ── Public API ───────────────────────────────────────────────
+
+        /// <summary>
+        /// Sets the follow target (e.g. the local player once it has spawned).
+        /// The pivot snaps to the new target instead of sweeping across the map.
+        /// Pass null to stop following.
+        /// </summary>
+        public void SetTarget(Transform newTarget)
+        {
+            target = newTarget;
+
+            if (target != null)
+                _currentFollowPos = target.position + targetOffset;
+        }
+
         // ── Private helpers ──────────────────────────────────────────
 
         /// <summary>
