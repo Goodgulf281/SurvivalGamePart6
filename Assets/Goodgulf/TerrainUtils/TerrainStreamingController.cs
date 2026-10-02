@@ -17,6 +17,7 @@ namespace Goodgulf.TerrainUtils
     public class TerrainStreamingController : MonoBehaviour
     {
         [Header("References")]
+        [Tooltip("Streaming target until the local player spawns: assign the spawn point. Replaced via SetStreamingTarget.")]
         [SerializeField] private Transform player;
         [SerializeField] private Terrain terrainPrefab; // Prefab for terrain chunks
         [SerializeField] private PrefabPlacementConfig prefabPlacementConfig;
@@ -739,6 +740,32 @@ namespace Goodgulf.TerrainUtils
         public int ViewDistance()
         {
             return loadRadius;
+        }
+
+        /// <summary>
+        /// Stream around a different Transform, e.g. the local player once it has spawned.
+        /// Chunks around the new target are queued on the next streaming update.
+        /// Phase 2 replaces this with a list of targets (one per player on the server).
+        /// </summary>
+        public void SetStreamingTarget(Transform target)
+        {
+            if (target == null)
+            {
+                Debug.LogWarning("SetStreamingTarget: target is null, keeping the current target");
+                return;
+            }
+
+            player = target;
+        }
+
+        /// <summary>
+        /// True if the chunk containing <paramref name="worldPosition"/> has finished loading.
+        /// </summary>
+        public bool IsChunkLoadedAt(Vector3 worldPosition)
+        {
+            return IsChunkLoaded(
+                Mathf.FloorToInt(worldPosition.x / chunkSize),
+                Mathf.FloorToInt(worldPosition.z / chunkSize));
         }
 
         public Transform Player()
