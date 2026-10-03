@@ -47,6 +47,17 @@ Plan for making this project network-enabled with FishNet 4.x. Reference guide: 
 
 Goal: a host and one client walk around the same terrain.
 
+How the pieces fit together:
+
+- **Startup:** the world path and the network path meet in `GameManager.SetupLocalPlayer`, which places the player and hands it to the camera, `Builder` and pathfinding.
+
+  ![Phase 1 player startup flow](docs/phase1-player-startup.svg)
+
+- **Owner vs remote copy:** only the owner's copy reads input and moves; every other copy follows its `NetworkTransform`/`NetworkAnimator`.
+
+  ![Owner and remote copies of the networked player](docs/phase1-owner-vs-remote.svg)
+
+
 Code (done on `claude/phase1-networked-player`; needs the editor setup below before it can be tested):
 
 - [x] Convert `ThirdPersonController` to a `NetworkBehaviour`:
