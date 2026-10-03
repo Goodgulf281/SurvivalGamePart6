@@ -115,14 +115,20 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - A pure client registers only its own player (`GameManager.RegisterLocalPlayer`), makes it the primary target and releases the spawn point.
   - The host registers everyone (its own player twice, hence the reference count), and also renders chunks around remote players. That cost is accepted for host mode.
   - `SetStreamingTarget` is gone. `Player()` now returns the primary target (the local player), so pathfinding still centres on it.
-- [ ] Editor setup for the two items above:
+- [x] Editor setup for the two items above:
   - Create a `WorldState` prefab: `NetworkObject` with **Is Global** on and **Initialize Order** -128, plus the `WorldState` component.
   - Add a `ServerSpawner` to the NetworkManager and list the prefab in it.
   - Check `TerrainStreamingController` → **Wait For World Seed** is on.
-- [ ] Test: host and client both load the world (it now waits for the seed), F9 dumps still match, and on the host a client that walks several chunks away has terrain loaded under it.
-- [ ] Spawn points (moved from Phase 1): the server picks a spawn point on a chunk it has already loaded, instead of relying on PlayerSpawner's Spawns sitting inside the initial load radius.
-  - Builds on multi-target streaming: the server knows which chunks are loaded around existing players.
+- [x] Test: host and client both load the world (it now waits for the seed), F9 dumps still match, and on the host a client that walks several chunks away has terrain loaded under it.
+- [x] Spawn points (moved from Phase 1): `WorldPlayerSpawner` (`Networking/WorldPlayerSpawner.cs`) replaces FishNet's PlayerSpawner, which knows nothing about terrain.
+  - On `OnClientLoadedStartScenes` the server waits for streaming to start, then tries the spawn points round robin and takes the first whose chunk it has loaded.
+  - If none is loaded, the chosen spawn point becomes a temporary streaming target until its chunk loads; it is released once the spawned player has registered itself.
+  - The spawn position is snapped to the ground the server sees (`GameManager.TryFindGround`, shared with the client-side snap), plus a small height offset.
   - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).
+- [ ] Editor setup for spawn points:
+  - On the NetworkManager, remove FishNet's **PlayerSpawner** and add **WorldPlayerSpawner** (both at once would spawn every player twice).
+  - Assign the player prefab, keep **Add To Default Scene** on, and move the spawn point(s) into **Spawns**.
+- [ ] Test: host and client spawn on the ground as before. With a dedicated server or after every player has left the spawn area, a joining client still spawns on loaded ground (the log shows "Loading terrain at spawn point").
 - [ ] Terrain edits:
   - `DepressTerrainAtPosition` and `RaiseTerrainAtPosition` become a ServerRpc request, with the server checking reach and rate.
   - The server applies the edit and appends `{chunkCoord, pos, radius, strength}` to a `SyncList<TerrainEdit>` on `WorldState`.

@@ -247,9 +247,24 @@ namespace Goodgulf.GameLogic
 
         private bool TrySnapToGround(ThirdPersonController player)
         {
-            Vector3 origin = player.transform.position + Vector3.up * _groundProbeHeight;
+            if (!TryFindGround(player.transform.position, player.transform, out Vector3 groundPoint, out Collider groundCollider))
+                return false;
 
-            // RaycastAll so the player's own CharacterController can't be the hit.
+            player.TeleportCharacter(groundPoint);
+            this.LogInfo($"Placed {player.name} on {groundCollider.name} at {groundPoint}");
+            return true;
+        }
+
+        /// <summary>
+        /// Finds the ground (on <c>_groundMask</c>) below or above <paramref name="position"/>,
+        /// ignoring colliders under <paramref name="ignore"/> (e.g. the player's own CharacterController).
+        /// Used for the local player's snap and by the server's <c>WorldPlayerSpawner</c>.
+        /// </summary>
+        public bool TryFindGround(Vector3 position, Transform ignore, out Vector3 groundPoint, out Collider groundCollider)
+        {
+            Vector3 origin = position + Vector3.up * _groundProbeHeight;
+
+            // RaycastAll so the ignored transform's colliders can't be the hit.
             // Set _groundMask to the terrain layer, or the player may land on a tree top.
             RaycastHit[] hits = Physics.RaycastAll(origin, Vector3.down, Mathf.Infinity, _groundMask, QueryTriggerInteraction.Ignore);
 
@@ -257,7 +272,7 @@ namespace Goodgulf.GameLogic
             RaycastHit ground = default;
             foreach (RaycastHit hit in hits)
             {
-                if (hit.collider.transform.IsChildOf(player.transform))
+                if (ignore != null && hit.collider.transform.IsChildOf(ignore))
                     continue;
 
                 if (!found || hit.distance < ground.distance)
@@ -267,12 +282,9 @@ namespace Goodgulf.GameLogic
                 }
             }
 
-            if (!found)
-                return false;
-
-            player.TeleportCharacter(ground.point);
-            this.LogInfo($"Placed {player.name} on {ground.collider.name} at {ground.point}");
-            return true;
+            groundPoint    = found ? ground.point : position;
+            groundCollider = found ? ground.collider : null;
+            return found;
         }
 
     }
