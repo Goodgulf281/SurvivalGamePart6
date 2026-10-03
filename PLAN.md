@@ -125,10 +125,10 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - If none is loaded, the chosen spawn point becomes a temporary streaming target until its chunk loads; it is released once the spawned player has registered itself.
   - The spawn position is snapped to the ground the server sees (`GameManager.TryFindGround`, shared with the client-side snap), plus a small height offset.
   - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).
-- [ ] Editor setup for spawn points:
+- [x] Editor setup for spawn points:
   - On the NetworkManager, remove FishNet's **PlayerSpawner** and add **WorldPlayerSpawner** (both at once would spawn every player twice).
   - Assign the player prefab, keep **Add To Default Scene** on, and move the spawn point(s) into **Spawns**.
-- [ ] Test: host and client spawn on the ground as before. With a dedicated server or after every player has left the spawn area, a joining client still spawns on loaded ground (the log shows "Loading terrain at spawn point").
+- [x] Test: host and client spawn on the ground as before. With a dedicated server or after every player has left the spawn area, a joining client still spawns on loaded ground (the log shows "Loading terrain at spawn point").
 - [ ] Terrain edits:
   - `DepressTerrainAtPosition` and `RaiseTerrainAtPosition` become a ServerRpc request, with the server checking reach and rate.
   - The server applies the edit and appends `{chunkCoord, pos, radius, strength}` to a `SyncList<TerrainEdit>` on `WorldState`.
