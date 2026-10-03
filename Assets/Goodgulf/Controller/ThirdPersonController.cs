@@ -9,7 +9,8 @@
 //              moves; remote copies are driven by a client-authoritative
 //              NetworkTransform/NetworkAnimator. The owner registers
 //              with GameManager, which releases movement once the
-//              terrain under the player has loaded.
+//              terrain under the player has loaded. On the server every
+//              player is a terrain streaming target.
 // Author:      YOUR NAME
 // Date:        2026-02-23
 // ============================================================
@@ -118,6 +119,23 @@ namespace Goodgulf.Controller
         }
 
         // ── Network Lifecycle ────────────────────────────────────────
+
+        /// <summary>
+        /// The server streams terrain around every player, so it has their chunks
+        /// (colliders, pathfinding) wherever they go. Clients only stream around their own
+        /// player, which GameManager registers.
+        /// </summary>
+        public override void OnStartServer()
+        {
+            if (GameManager.Instance != null && GameManager.Instance.StreamingController != null)
+                GameManager.Instance.StreamingController.RegisterStreamingTarget(transform);
+        }
+
+        public override void OnStopServer()
+        {
+            if (GameManager.Instance != null && GameManager.Instance.StreamingController != null)
+                GameManager.Instance.StreamingController.UnregisterStreamingTarget(transform);
+        }
 
         public override void OnStartClient()
         {

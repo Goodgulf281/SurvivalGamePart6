@@ -49,9 +49,9 @@ Goal: a host and one client walk around the same terrain.
 
 How the pieces fit together:
 
-- **Startup:** the world path and the network path meet in `GameManager.SetupLocalPlayer`, which places the player and hands it to the camera, `Builder` and pathfinding.
+- **Startup:** `WorldState` starts streaming with the shared seed (Phase 2). The world path and the player path meet in `GameManager.SetupLocalPlayer`, which places the player and hands it to the camera, `Builder` and pathfinding.
 
-  ![Phase 1 player startup flow](docs/phase1-player-startup.svg)
+  ![Player startup flow](docs/phase1-player-startup.svg)
 
 - **Owner vs remote copy:** only the owner's copy reads input and moves; every other copy follows its `NetworkTransform`/`NetworkAnimator`.
 
@@ -103,16 +103,23 @@ Expected until later phases: building is local to each player (Phase 3), and the
 
 ## Phase 2: World sync
 
-- [ ] `WorldState`: a global NetworkObject (Is Global, Initialize Order -128, spawned by `ServerSpawner`) with `SyncVar<int> Seed`.
-  - The server sets the seed in `OnStartServer`.
-  - Clients apply it to `TerrainStreamingController`, `StreamingTerrainGeneratorJobs` and `AsyncTerrainPrefabPlacer.SetBaseSeed` before streaming starts.
-  - Streaming must not auto-start in `Start()`. It waits for the seed.
-- [ ] Multi-target streaming. Change `TerrainStreamingController` to follow a list of positions (`RegisterStreamingTarget` / `UnregisterStreamingTarget`):
-  - The load set is the union of the radii around all targets.
+- [x] `WorldState` (`Networking/WorldState.cs`): a global NetworkObject with `SyncVar<int> _seed`.
+  - The server sets the seed in `OnStartServer` (`-seed <n>` on the command line, else the Inspector default) and starts its own streaming.
+  - Clients call `TerrainStreamingController.BeginStreaming(seed)` in `OnStartClient`, which applies it to `AsyncTerrainPrefabPlacer.SetBaseSeed` and `StreamingTerrainGeneratorJobs.seed`. On the host the second call is ignored.
+  - Streaming no longer auto-starts in `Start()` while **Wait For World Seed** is on (the default). Turn it off to stream offline with the controller's own seed.
+  - Note: terrain heights don't use the seed today (`TerrainHeightJob` is a pure function of world position); only prefab placement does.
+- [x] Multi-target streaming. `TerrainStreamingController` follows a list of targets (`RegisterStreamingTarget` / `UnregisterStreamingTarget`, reference counted):
+  - The load set is the union of the radii around all targets; queued loads no target needs are dropped.
   - A chunk unloads only when it is outside the unload radius of every target.
-  - The server registers every player's transform (subscribe to `OnSpawned`/`OnRemoteConnectionState`).
-  - A pure client registers only its own player.
-  - The host registers everyone, and also renders chunks around remote players. That cost is accepted for host mode.
+  - The server registers every player in `ThirdPersonController.OnStartServer` (and unregisters in `OnStopServer`) rather than subscribing to `OnSpawned`.
+  - A pure client registers only its own player (`GameManager.RegisterLocalPlayer`), makes it the primary target and releases the spawn point.
+  - The host registers everyone (its own player twice, hence the reference count), and also renders chunks around remote players. That cost is accepted for host mode.
+  - `SetStreamingTarget` is gone. `Player()` now returns the primary target (the local player), so pathfinding still centres on it.
+- [ ] Editor setup for the two items above:
+  - Create a `WorldState` prefab: `NetworkObject` with **Is Global** on and **Initialize Order** -128, plus the `WorldState` component.
+  - Add a `ServerSpawner` to the NetworkManager and list the prefab in it.
+  - Check `TerrainStreamingController` → **Wait For World Seed** is on.
+- [ ] Test: host and client both load the world (it now waits for the seed), F9 dumps still match, and on the host a client that walks several chunks away has terrain loaded under it.
 - [ ] Spawn points (moved from Phase 1): the server picks a spawn point on a chunk it has already loaded, instead of relying on PlayerSpawner's Spawns sitting inside the initial load radius.
   - Builds on multi-target streaming: the server knows which chunks are loaded around existing players.
   - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).

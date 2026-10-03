@@ -17,7 +17,8 @@ namespace Goodgulf.TerrainUtils
     public class TerrainStreamingController : MonoBehaviour
     {
         [Header("References")]
-        [Tooltip("Streaming target until the local player spawns: assign the spawn point. Replaced via SetStreamingTarget.")]
+        [Tooltip("Initial streaming target (the spawn point). Players are added with RegisterStreamingTarget; " +
+                 "a client releases this target once its own player has spawned.")]
         [SerializeField] private Transform player;
         [SerializeField] private Terrain terrainPrefab; // Prefab for terrain chunks
         [SerializeField] private PrefabPlacementConfig prefabPlacementConfig;
@@ -66,7 +67,24 @@ namespace Goodgulf.TerrainUtils
         
         [Header("Cache Management")]
         [SerializeField] private bool clearCacheOnStart = false;
-        
+
+        [Header("Networking")]
+        [Tooltip("Wait for WorldState to deliver the shared seed before streaming. " +
+                 "Turn off to stream immediately with the seed above (offline testing).")]
+        [SerializeField] private bool _waitForWorldSeed = true;
+
+        // Streaming targets, reference counted: on the host a player is registered both
+        // by the server (every player) and by its owning client (its own player)
+        private readonly List<Transform> _targets = new List<Transform>();
+        private readonly Dictionary<Transform, int> _targetRefCounts = new Dictionary<Transform, int>();
+        private Transform _primaryTarget;
+        private bool _initialTargetReleased;
+
+        // Chunks the targets occupied at the last streaming update
+        private readonly HashSet<Vector2Int> _lastTargetChunks = new HashSet<Vector2Int>();
+        private bool _targetsDirty;
+        private bool _streamingStarted;
+
         // Async prefab placer
         private AsyncTerrainPrefabPlacer asyncPrefabPlacer;
         
@@ -81,9 +99,6 @@ namespace Goodgulf.TerrainUtils
         // Priority queue for chunk loading
         private List<ChunkLoadRequest> pendingLoadRequests = new List<ChunkLoadRequest>();
         
-        // Current player chunk position
-        private Vector2Int currentPlayerChunk;
-        private Vector2Int previousPlayerChunk;
         
         // Frame counter for update interval
         private int frameCounter = 0;
@@ -108,14 +123,48 @@ namespace Goodgulf.TerrainUtils
         private void Start()
         {
             InitializeAsyncPlacer();
-            
+
             if (player == null)
             {
-                Debug.LogWarning("Player transform not assigned! Using Camera.main");
+                Debug.LogWarning("Initial streaming target not assigned! Using Camera.main");
                 if (Camera.main != null)
                 {
                     player = Camera.main.transform;
                 }
+            }
+
+            // In a networked session WorldState calls BeginStreaming with the shared seed
+            if (!_waitForWorldSeed)
+            {
+                BeginStreaming(seed);
+            }
+        }
+
+        /// <summary>
+        /// Start streaming with the world seed. Called once by WorldState (server and
+        /// clients) so every machine generates the same world; later calls are ignored.
+        /// </summary>
+        public void BeginStreaming(int worldSeed)
+        {
+            if (_streamingStarted)
+            {
+                if (worldSeed != seed)
+                    Debug.LogError($"BeginStreaming: already streaming with seed {seed}, ignoring seed {worldSeed}");
+                return;
+            }
+
+            _streamingStarted = true;
+            seed = worldSeed;
+
+            // Heights are a pure function of world position today; the seed drives prefab placement
+            if (asyncPrefabPlacer != null)
+                asyncPrefabPlacer.SetBaseSeed(seed);
+            if (terrainGenerator != null)
+                terrainGenerator.seed = seed;
+
+            if (logChunkOperations)
+            {
+                Debug.Log($"Streaming started with seed {seed}");
             }
 
             if (clearCacheOnStart)
@@ -126,11 +175,21 @@ namespace Goodgulf.TerrainUtils
 
             }
 
-            // Load initial chunks around player
-            UpdatePlayerChunkPosition();
+            // Skip the spawn point if the local player already replaced it
+            if (player != null && !_initialTargetReleased)
+            {
+                RegisterStreamingTarget(player);
+            }
+
+            // Load initial chunks around the targets
+            CollectTargetChunks(_lastTargetChunks);
+            _targetsDirty = false;
             _ = LoadInitialChunks();
         }
-        
+
+        /// <summary>True once BeginStreaming has run.</summary>
+        public bool IsStreaming => _streamingStarted;
+
         /// <summary>
         /// Initialize the async prefab placer.
         /// </summary>
@@ -144,16 +203,14 @@ namespace Goodgulf.TerrainUtils
                 return;
             }
             // Note: Terrain will be set per-chunk in LoadChunk
-            
-            // asyncPrefabPlacer.SetPlacementConfig(prefabPlacementConfig);
-            // asyncPrefabPlacer.SetBaseSeed(seed);
+            // The seed is applied in BeginStreaming
 
             if (logChunkOperations)
             {
                 Debug.Log("TerrainStreamingController initialized with AsyncTerrainPrefabPlacer");
             }
         }
-        
+
         async Task InitializeAsync()
         {
             try
@@ -165,172 +222,332 @@ namespace Goodgulf.TerrainUtils
                 Debug.LogError($"Init failed: {e}");
             }
         }
-        
-        
+
+
         private void Update()
         {
+            if (!_streamingStarted) return;
+
             frameCounter++;
-            
+
             // Update streaming at specified interval
             if (frameCounter >= updateInterval)
             {
                 frameCounter = 0;
                 UpdateStreaming();
             }
-            
+
             // Process pending load requests
             ProcessPendingLoadRequests();
         }
-        
+
+        // ============================================================
+        // Streaming targets
+        // ============================================================
+
+        /// <summary>
+        /// Stream terrain around <paramref name="target"/> as well as any existing targets.
+        /// Reference counted: every Register needs a matching Unregister.
+        /// </summary>
+        public void RegisterStreamingTarget(Transform target)
+        {
+            if (target == null)
+            {
+                Debug.LogWarning("RegisterStreamingTarget: target is null");
+                return;
+            }
+
+            if (_targetRefCounts.TryGetValue(target, out int count))
+            {
+                _targetRefCounts[target] = count + 1;
+                return;
+            }
+
+            _targetRefCounts[target] = 1;
+            _targets.Add(target);
+            _targetsDirty = true;
+
+            if (logChunkOperations)
+            {
+                Debug.Log($"Streaming target added: {target.name} ({_targets.Count} targets)");
+            }
+        }
+
+        /// <summary>
+        /// Release one registration of <paramref name="target"/>. Its chunks unload once no
+        /// remaining target is within the unload radius.
+        /// </summary>
+        public void UnregisterStreamingTarget(Transform target)
+        {
+            if (target == null || !_targetRefCounts.TryGetValue(target, out int count))
+                return;
+
+            if (count > 1)
+            {
+                _targetRefCounts[target] = count - 1;
+                return;
+            }
+
+            RemoveTarget(target);
+        }
+
+        /// <summary>
+        /// The target pathfinding and the debug UI centre on (the local player).
+        /// It must also be registered with RegisterStreamingTarget to be streamed around.
+        /// </summary>
+        public void SetPrimaryTarget(Transform target)
+        {
+            _primaryTarget = target;
+        }
+
+        /// <summary>
+        /// Drop the initial target (the spawn point) once the local player streams instead.
+        /// </summary>
+        public void ReleaseInitialTarget()
+        {
+            if (_initialTargetReleased) return;
+            _initialTargetReleased = true;
+
+            if (player != null)
+                UnregisterStreamingTarget(player);
+        }
+
+        private void RemoveTarget(Transform target)
+        {
+            _targetRefCounts.Remove(target);
+            _targets.Remove(target);
+            _targetsDirty = true;
+
+            if (_primaryTarget == target)
+                _primaryTarget = null;
+
+            if (logChunkOperations && target != null)
+            {
+                Debug.Log($"Streaming target removed: {target.name} ({_targets.Count} targets)");
+            }
+        }
+
+        /// <summary>
+        /// Fill <paramref name="result"/> with the chunk each live target is in.
+        /// Destroyed targets are dropped.
+        /// </summary>
+        private void CollectTargetChunks(HashSet<Vector2Int> result)
+        {
+            result.Clear();
+
+            for (int i = _targets.Count - 1; i >= 0; i--)
+            {
+                Transform target = _targets[i];
+                if (target == null)
+                {
+                    // Destroyed without unregistering (e.g. a despawned player)
+                    _targetRefCounts.Remove(target);
+                    _targets.RemoveAt(i);
+                    _targetsDirty = true;
+                    continue;
+                }
+
+                result.Add(WorldToChunk(target.position));
+            }
+        }
+
+        private Vector2Int WorldToChunk(Vector3 position)
+        {
+            return new Vector2Int(
+                Mathf.FloorToInt(position.x / chunkSize),
+                Mathf.FloorToInt(position.z / chunkSize)
+            );
+        }
+
+        /// <summary>
+        /// Distance in chunks from <paramref name="chunkCoord"/> to the nearest target chunk.
+        /// </summary>
+        private float DistanceToNearestTarget(Vector2Int chunkCoord, HashSet<Vector2Int> targetChunks)
+        {
+            float best = float.MaxValue;
+            foreach (Vector2Int targetChunk in targetChunks)
+            {
+                float distance = Vector2.Distance(chunkCoord, targetChunk);
+                if (distance < best) best = distance;
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// The chunks to keep loaded: every chunk within loadRadius of any target,
+        /// with its distance to the nearest target.
+        /// </summary>
+        private Dictionary<Vector2Int, float> CollectDesiredChunks(HashSet<Vector2Int> targetChunks)
+        {
+            Dictionary<Vector2Int, float> desired = new Dictionary<Vector2Int, float>();
+
+            foreach (Vector2Int targetChunk in targetChunks)
+            {
+                for (int x = -loadRadius; x <= loadRadius; x++)
+                {
+                    for (int z = -loadRadius; z <= loadRadius; z++)
+                    {
+                        // Check if within circular radius
+                        float distance = new Vector2(x, z).magnitude;
+                        if (distance > loadRadius) continue;
+
+                        Vector2Int chunkCoord = targetChunk + new Vector2Int(x, z);
+                        if (!desired.TryGetValue(chunkCoord, out float existing) || distance < existing)
+                        {
+                            desired[chunkCoord] = distance;
+                        }
+                    }
+                }
+            }
+
+            return desired;
+        }
+
+        // ============================================================
+        // Streaming
+        // ============================================================
+
         /// <summary>
         /// Main streaming update - determines which chunks to load/unload.
+        /// Runs when a target changes chunk or a target is added or removed.
         /// </summary>
         private void UpdateStreaming()
         {
-            if (player == null) return;
-            
-            UpdatePlayerChunkPosition();
-            
-            // Check if player moved to a new chunk
-            if (currentPlayerChunk != previousPlayerChunk)
+            HashSet<Vector2Int> targetChunks = new HashSet<Vector2Int>();
+            CollectTargetChunks(targetChunks);
+
+            if (!_targetsDirty && targetChunks.SetEquals(_lastTargetChunks))
+                return;
+
+            if (logChunkOperations)
             {
-                if (logChunkOperations)
-                {
-                    Debug.Log($"Player moved to chunk {currentPlayerChunk}");
-                }
-                
-                // Queue chunks that need to be loaded
-                QueueChunksToLoad();
-                
-                // Unload distant chunks
-                UnloadDistantChunks();
-                
-                previousPlayerChunk = currentPlayerChunk;
+                Debug.Log($"Streaming targets now in chunks: {string.Join(", ", targetChunks)}");
             }
+
+            _targetsDirty = false;
+            _lastTargetChunks.Clear();
+            _lastTargetChunks.UnionWith(targetChunks);
+
+            // With no targets there is nothing to stream towards; keep what is loaded
+            if (targetChunks.Count == 0) return;
+
+            Dictionary<Vector2Int, float> desired = CollectDesiredChunks(targetChunks);
+
+            // Drop queued loads that no target needs any more
+            pendingLoadRequests.RemoveAll(r => !desired.ContainsKey(r.chunkCoord));
+
+            // Queue chunks that need to be loaded
+            QueueChunksToLoad(desired);
+
+            // Unload chunks that are far from every target
+            UnloadDistantChunks(targetChunks);
         }
-        
+
         /// <summary>
-        /// Update the current player chunk position.
-        /// </summary>
-        private void UpdatePlayerChunkPosition()
-        {
-            Vector3 playerPos = player.position;
-            currentPlayerChunk = new Vector2Int(
-                Mathf.FloorToInt(playerPos.x / chunkSize),
-                Mathf.FloorToInt(playerPos.z / chunkSize)
-            );
-        }
-        
-        /// <summary>
-        /// Load initial chunks around player at startup.
+        /// Load initial chunks around the targets at startup.
         /// </summary>
         private async Task LoadInitialChunks()
         {
             if (logChunkOperations)
             {
-                Debug.Log($"Loading initial chunks around {currentPlayerChunk} (radius: {loadRadius})");
+                Debug.Log($"Loading initial chunks around {string.Join(", ", _lastTargetChunks)} (radius: {loadRadius})");
             }
-            
+
             List<ChunkLoadRequest> initialRequests = new List<ChunkLoadRequest>();
-            
+
             // Generate list of chunks to load
-            for (int x = -loadRadius; x <= loadRadius; x++)
+            foreach (var kvp in CollectDesiredChunks(_lastTargetChunks))
             {
-                for (int z = -loadRadius; z <= loadRadius; z++)
+                initialRequests.Add(new ChunkLoadRequest
                 {
-                    Vector2Int chunkCoord = currentPlayerChunk + new Vector2Int(x, z);
-                    
-                    // Check if within circular radius
-                    float distance = new Vector2(x, z).magnitude;
-                    if (distance <= loadRadius)
-                    {
-                        initialRequests.Add(new ChunkLoadRequest
-                        {
-                            chunkCoord = chunkCoord,
-                            distanceToPlayer = distance,
-                            priority = Mathf.RoundToInt(distance * 10)
-                        });
-                    }
-                }
+                    chunkCoord = kvp.Key,
+                    distanceToPlayer = kvp.Value,
+                    priority = Mathf.RoundToInt(kvp.Value * 10)
+                });
             }
-            
+
             // Sort by priority (closest first)
             initialRequests.Sort((a, b) => a.priority.CompareTo(b.priority));
-            
+
             initialChunkCount = initialRequests.Count;
-            
+
             // Load chunks in batches to avoid overwhelming the system
             int batchSize = maxConcurrentLoads;
             for (int i = 0; i < initialRequests.Count; i += batchSize)
             {
                 int count = Mathf.Min(batchSize, initialRequests.Count - i);
                 List<Task> batchTasks = new List<Task>();
-                
+
                 for (int j = 0; j < count; j++)
                 {
                     var request = initialRequests[i + j];
+                    if (loadedChunks.Contains(request.chunkCoord) || loadingChunks.Contains(request.chunkCoord))
+                        continue;
                     batchTasks.Add(LoadChunk(request.chunkCoord));
                 }
-                
+
                 // Wait for this batch to complete before starting next
                 await Task.WhenAll(batchTasks);
-                
+
                 // Allow a frame to pass for instantiation
                 await Task.Yield();
             }
-            
+
             if (logChunkOperations)
             {
                 Debug.Log($"Initial chunk loading complete. Loaded {initialRequests.Count} chunks");
             }
-            
+
             // Mark initial load as complete and fire event
             initialLoadComplete = true;
 
             onInitialChunksLoaded?.Invoke();
         }
-        
+
         /// <summary>
-        /// Queue chunks that need to be loaded based on player position.
+        /// Queue chunks that need to be loaded around the targets.
         /// </summary>
-        private void QueueChunksToLoad()
+        private void QueueChunksToLoad(Dictionary<Vector2Int, float> desired)
         {
-            for (int x = -loadRadius; x <= loadRadius; x++)
+            foreach (var kvp in desired)
             {
-                for (int z = -loadRadius; z <= loadRadius; z++)
+                Vector2Int chunkCoord = kvp.Key;
+
+                // Skip if already loaded or loading
+                if (loadedChunks.Contains(chunkCoord) || loadingChunks.Contains(chunkCoord))
                 {
-                    Vector2Int chunkCoord = currentPlayerChunk + new Vector2Int(x, z);
-                    
-                    // Check if within circular radius
-                    float distance = new Vector2(x, z).magnitude;
-                    if (distance > loadRadius) continue;
-                    
-                    // Skip if already loaded or loading
-                    if (loadedChunks.Contains(chunkCoord) || loadingChunks.Contains(chunkCoord))
+                    continue;
+                }
+
+                int priority = Mathf.RoundToInt(kvp.Value * 10);
+                int existing = pendingLoadRequests.FindIndex(r => r.chunkCoord == chunkCoord);
+
+                if (existing < 0)
+                {
+                    pendingLoadRequests.Add(new ChunkLoadRequest
                     {
-                        continue;
-                    }
-                    
-                    // Add to pending requests if not already queued
-                    if (!pendingLoadRequests.Any(r => r.chunkCoord == chunkCoord))
-                    {
-                        pendingLoadRequests.Add(new ChunkLoadRequest
-                        {
-                            chunkCoord = chunkCoord,
-                            distanceToPlayer = distance,
-                            priority = Mathf.RoundToInt(distance * 10)
-                        });
-                    }
+                        chunkCoord = chunkCoord,
+                        distanceToPlayer = kvp.Value,
+                        priority = priority
+                    });
+                }
+                else
+                {
+                    // Re-prioritise relative to the targets' new positions
+                    var request = pendingLoadRequests[existing];
+                    request.distanceToPlayer = kvp.Value;
+                    request.priority = priority;
+                    pendingLoadRequests[existing] = request;
                 }
             }
-            
+
             // Sort by priority if enabled
             if (usePriorityLoading)
             {
                 pendingLoadRequests.Sort((a, b) => a.priority.CompareTo(b.priority));
             }
         }
-        
+
         /// <summary>
         /// Process pending chunk load requests, respecting max concurrent loads.
         /// </summary>
@@ -485,33 +702,28 @@ namespace Goodgulf.TerrainUtils
         }
         
         /// <summary>
-        /// Unload chunks that are too far from the player.
+        /// Unload chunks that are beyond the unload radius of every target.
         /// </summary>
-        private void UnloadDistantChunks()
+        private void UnloadDistantChunks(HashSet<Vector2Int> targetChunks)
         {
             List<Vector2Int> chunksToUnload = new List<Vector2Int>();
-            
-            // Find chunks beyond unload radius
+
+            // Find chunks beyond unload radius of all targets
             foreach (var chunkCoord in loadedChunks)
             {
-                float distance = Vector2.Distance(
-                    new Vector2(chunkCoord.x, chunkCoord.y),
-                    new Vector2(currentPlayerChunk.x, currentPlayerChunk.y)
-                );
-                
-                if (distance > unloadRadius)
+                if (DistanceToNearestTarget(chunkCoord, targetChunks) > unloadRadius)
                 {
                     chunksToUnload.Add(chunkCoord);
                 }
             }
-            
+
             // Unload chunks
             foreach (var chunkCoord in chunksToUnload)
             {
                 UnloadChunk(chunkCoord);
             }
         }
-        
+
         /// <summary>
         /// Unload a single chunk.
         /// </summary>
@@ -644,28 +856,26 @@ namespace Goodgulf.TerrainUtils
         
         private void OnDrawGizmos()
         {
-            if (!showDebugGizmos || player == null) return;
-            
-            Vector3 playerPos = player.position;
-            Vector2Int playerChunk = new Vector2Int(
-                Mathf.FloorToInt(playerPos.x / chunkSize),
-                Mathf.FloorToInt(playerPos.z / chunkSize)
-            );
-            
-            // Draw load radius
-            Gizmos.color = Color.green;
-            DrawCircleGizmo(
-                new Vector3(playerChunk.x * chunkSize, 0, playerChunk.y * chunkSize),
-                loadRadius * chunkSize
-            );
-            
-            // Draw unload radius
-            Gizmos.color = Color.red;
-            DrawCircleGizmo(
-                new Vector3(playerChunk.x * chunkSize, 0, playerChunk.y * chunkSize),
-                unloadRadius * chunkSize
-            );
-            
+            if (!showDebugGizmos) return;
+
+            List<Transform> gizmoTargets = Application.isPlaying ? _targets : new List<Transform> { player };
+
+            foreach (Transform target in gizmoTargets)
+            {
+                if (target == null) continue;
+
+                Vector2Int targetChunk = WorldToChunk(target.position);
+                Vector3 center = new Vector3(targetChunk.x * chunkSize, 0, targetChunk.y * chunkSize);
+
+                // Draw load radius
+                Gizmos.color = Color.green;
+                DrawCircleGizmo(center, loadRadius * chunkSize);
+
+                // Draw unload radius
+                Gizmos.color = Color.red;
+                DrawCircleGizmo(center, unloadRadius * chunkSize);
+            }
+
             // Draw loaded chunks
             if (Application.isPlaying)
             {
@@ -728,7 +938,9 @@ namespace Goodgulf.TerrainUtils
             GUI.Box(new Rect(10, 220, 500, 80), "");
             GUI.Label(new Rect(20, 230, 480, 20), $"Streaming: {GetStreamingStats()}");
             GUI.Label(new Rect(20, 250, 480, 20), $"Async Cache: {asyncPrefabPlacer.GetAsyncCacheStats()}");
-            GUI.Label(new Rect(20, 270, 480, 20), $"Player Chunk: {currentPlayerChunk}");
+            Transform primary = Player();
+            string primaryChunk = primary != null ? WorldToChunk(primary.position).ToString() : "none";
+            GUI.Label(new Rect(20, 270, 480, 20), $"Player Chunk: {primaryChunk} | Targets: {_targets.Count}");
         }
         
         
@@ -743,22 +955,6 @@ namespace Goodgulf.TerrainUtils
         }
 
         /// <summary>
-        /// Stream around a different Transform, e.g. the local player once it has spawned.
-        /// Chunks around the new target are queued on the next streaming update.
-        /// Phase 2 replaces this with a list of targets (one per player on the server).
-        /// </summary>
-        public void SetStreamingTarget(Transform target)
-        {
-            if (target == null)
-            {
-                Debug.LogWarning("SetStreamingTarget: target is null, keeping the current target");
-                return;
-            }
-
-            player = target;
-        }
-
-        /// <summary>
         /// True if the chunk containing <paramref name="worldPosition"/> has finished loading.
         /// </summary>
         public bool IsChunkLoadedAt(Vector3 worldPosition)
@@ -768,8 +964,19 @@ namespace Goodgulf.TerrainUtils
                 Mathf.FloorToInt(worldPosition.z / chunkSize));
         }
 
+        /// <summary>
+        /// The target pathfinding centres on: the primary target (the local player) if set,
+        /// otherwise the first live target, otherwise the initial target.
+        /// </summary>
         public Transform Player()
         {
+            if (_primaryTarget != null) return _primaryTarget;
+
+            foreach (Transform target in _targets)
+            {
+                if (target != null) return target;
+            }
+
             return player;
         }
 
