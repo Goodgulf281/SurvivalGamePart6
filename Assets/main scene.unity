@@ -1925,6 +1925,7 @@ MonoBehaviour:
   showDebugGizmos: 0
   logChunkOperations: 0
   clearCacheOnStart: 0
+  _waitForWorldSeed: 1
 --- !u!114 &1568659446
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2739,6 +2740,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 7443408887813606051, guid: 0b650fca685f2eb41a86538aa883e4c1, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1927921104}
+    - targetCorrespondingSourceObject: {fileID: 7443408887813606051, guid: 0b650fca685f2eb41a86538aa883e4c1, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1927921105}
   m_SourcePrefab: {fileID: 100100000, guid: 0b650fca685f2eb41a86538aa883e4c1, type: 3}
 --- !u!1 &1927921102 stripped
 GameObject:
@@ -2772,6 +2776,21 @@ MonoBehaviour:
   _defaultMode: 0
   _clientAddress: localhost
   _debugEnabled: 1
+--- !u!114 &1927921105
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1927921102}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 859294e5d2aaf9a47b1e00bd20772f2b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _automaticallySpawn: 1
+  _networkObjects:
+  - {fileID: 6792165020451083505, guid: 349e5222e87df35459aed613ae5a9a30, type: 3}
 --- !u!1 &2020634216
 GameObject:
   m_ObjectHideFlags: 0
