@@ -33,7 +33,7 @@ Five subsystems, the first four coordinated at startup by `GameLogic/GameManager
 ### Startup order
 `GameManager.Awake` switches to the scene camera. Streaming doesn't start on its own: `WorldState` (a global NetworkObject spawned by the NetworkManager's `ServerSpawner`) calls `TerrainStreamingController.BeginStreaming(seed)` in `OnStartServer` and `OnStartClient`, so every machine generates the same world. Two things must then be ready, in either order:
 - **World:** `GameManager.InitializeGameLogic()`, wired to the streaming controller's `onInitialChunksLoaded` in the scene, marks the world ready and calls `Builder.Instance.CacheTerrains()`.
-- **Local player:** the player prefab is spawned by FishNet's PlayerSpawner. `ThirdPersonController.OnStartClient` (owner only) enables `PlayerInput` and calls `GameManager.RegisterLocalPlayer`, which registers the player as a streaming target, makes it the primary target and releases the spawn point.
+- **Local player:** the player prefab is spawned by `WorldPlayerSpawner` (replaces FishNet's PlayerSpawner on the NetworkManager), which only spawns once the server has the spawn point's chunk loaded and snaps the position to the ground. `ThirdPersonController.OnStartClient` (owner only) enables `PlayerInput` and calls `GameManager.RegisterLocalPlayer`, which registers the player as a streaming target, makes it the primary target and releases the spawn point.
 
 Streaming follows a reference-counted list of targets: the server registers every player (`ThirdPersonController.OnStartServer`), a client only its own. A chunk loads when it's within `loadRadius` of any target and unloads when it's beyond `unloadRadius` of all of them.
 
