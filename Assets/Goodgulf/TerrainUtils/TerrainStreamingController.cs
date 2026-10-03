@@ -61,6 +61,13 @@ namespace Goodgulf.TerrainUtils
         [Tooltip("Called when a chunk is unloaded")]
         public UnityEvent<Vector2Int> onChunkUnload;
         
+        /// <summary>
+        /// Raised when a chunk's heights are generated and its prefabs placed, just before it
+        /// counts as loaded (and before onChunkLoadComplete). Synced terrain edits are
+        /// replayed here so the chunk is complete before colliders and pathfinding use it.
+        /// </summary>
+        public event Action<Vector2Int, Terrain> ChunkTerrainReady;
+        
         [Header("Debug")]
         [SerializeField] private bool showDebugGizmos = true;
         [SerializeField] private bool logChunkOperations = false;
@@ -630,6 +637,9 @@ namespace Goodgulf.TerrainUtils
                     chunkSize
                 );
                 
+                // Replay synced terrain edits before anything else uses the chunk
+                ChunkTerrainReady?.Invoke(chunkCoord, terrainInstance);
+                
                 // Mark as loaded
                 loadedChunks.Add(chunkCoord);
                 totalChunksLoaded++;
@@ -954,6 +964,25 @@ namespace Goodgulf.TerrainUtils
             return loadRadius;
         }
 
+        /// <summary>
+        /// The chunk coordinate containing <paramref name="worldPosition"/>.
+        /// </summary>
+        public Vector2Int ChunkAt(Vector3 worldPosition)
+        {
+            return WorldToChunk(worldPosition);
+        }
+        
+        /// <summary>
+        /// The terrain of a chunk that has finished loading.
+        /// </summary>
+        public bool TryGetLoadedTerrain(Vector2Int chunkCoord, out Terrain terrain)
+        {
+            terrain = null;
+            return loadedChunks.Contains(chunkCoord) &&
+                   terrainInstances.TryGetValue(chunkCoord, out terrain) &&
+                   terrain != null;
+        }
+        
         /// <summary>
         /// True if the chunk containing <paramref name="worldPosition"/> has finished loading.
         /// </summary>
