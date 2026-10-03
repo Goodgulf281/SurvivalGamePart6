@@ -74,30 +74,30 @@ Code (done on `claude/phase1-networked-player`; needs the editor setup below bef
 - [x] Spawn safety:
   - The local player is held (no gravity or movement) until the chunk under it has loaded locally.
   - It is then snapped to the ground below (`GameManager._groundMask`) and released.
-  - [ ] The server picks spawn points on already-loaded chunks. For now, PlayerSpawner's Spawns should sit inside the initial load radius around the spawn point.
+  - Server-side spawn-point selection moved to Phase 2. For now, PlayerSpawner's Spawns must sit inside the initial load radius around the spawn point.
 - [x] `TerrainPositionObjects` skips missing entries (the player is no longer a scene object).
 
 Editor setup:
 
-- [ ] Add a NetworkManager scene object (start from `FishNet/Demos/Prefabs/NetworkManager.prefab`):
+- [x] Add a NetworkManager scene object (start from `FishNet/Demos/Prefabs/NetworkManager.prefab`):
   - Add `NetworkBootstrap` and set the HUD's Auto Start Type to Disabled.
   - ObserverManager with a **SceneCondition**.
   - PlayerSpawner with **Add To Default Scene** checked, and a spawn point in **Spawns**.
   - The HUD, for starting host or client.
   - The NetworkManager must not carry a NetworkObject (§4).
-- [ ] Spawn point: an empty GameObject where players should appear. Assign it to `TerrainStreamingController.player` and to PlayerSpawner's Spawns.
-- [ ] Player prefab:
+- [x] Spawn point: an empty GameObject where players should appear. Assign it to `TerrainStreamingController.player` and to PlayerSpawner's Spawns.
+- [x] Player prefab:
   - Move the scene player into a prefab. Disable its `PlayerInput` component on the prefab.
   - Add `NetworkObject`, a client-authoritative `NetworkTransform` (Component Configuration = CharacterController) and a client-authoritative `NetworkAnimator`.
   - Assign it to PlayerSpawner and delete the scene player.
-- [ ] `GameManager`: assign the streaming controller and set **Ground Mask** to the terrain layer (the same mask `TerrainPositionObjects` uses).
-- [ ] MPPM scenario: Player Tags `Host` and `Client`; Main Editor = `Host`, Virtual Editor = `Client`.
+- [x] `GameManager`: assign the streaming controller and set **Ground Mask** to the terrain layer (the same mask `TerrainPositionObjects` uses).
+- [x] MPPM scenario: Player Tags `Host` and `Client`; Main Editor = `Host`, Virtual Editor = `Client`.
 
 Done when:
 
-- [ ] Host and client each see both players move smoothly, and each camera follows its own player.
-- [ ] Neither player falls through the terrain at spawn.
-- [ ] The F9 dumps from host and client still match.
+- [x] Host and client each see both players move smoothly, and each camera follows its own player.
+- [x] Neither player falls through the terrain at spawn.
+- [x] The F9 dumps from host and client still match.
 
 Expected until later phases: building is local to each player (Phase 3), and the host only streams terrain around its own player, so a distant client floats over unloaded ground on the host's screen (Phase 2).
 
@@ -113,6 +113,9 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - The server registers every player's transform (subscribe to `OnSpawned`/`OnRemoteConnectionState`).
   - A pure client registers only its own player.
   - The host registers everyone, and also renders chunks around remote players. That cost is accepted for host mode.
+- [ ] Spawn points (moved from Phase 1): the server picks a spawn point on a chunk it has already loaded, instead of relying on PlayerSpawner's Spawns sitting inside the initial load radius.
+  - Builds on multi-target streaming: the server knows which chunks are loaded around existing players.
+  - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).
 - [ ] Terrain edits:
   - `DepressTerrainAtPosition` and `RaiseTerrainAtPosition` become a ServerRpc request, with the server checking reach and rate.
   - The server applies the edit and appends `{chunkCoord, pos, radius, strength}` to a `SyncList<TerrainEdit>` on `WorldState`.
