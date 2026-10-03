@@ -58,6 +58,9 @@ namespace Goodgulf.GameLogic
         /// <summary>The player owned by this client, or null before it spawns.</summary>
         public GameObject LocalPlayer => _localPlayer != null ? _localPlayer.gameObject : null;
 
+        /// <summary>The scene's terrain streaming controller.</summary>
+        public TerrainStreamingController StreamingController => _streamingController;
+
         private ThirdPersonController _localPlayer;
         private bool _worldReady;
         private bool _gameLogicInitialized;
@@ -155,9 +158,14 @@ namespace Goodgulf.GameLogic
             _localPlayer = player;
             _localPlayer.SetMovementEnabled(false);
 
-            // Stream around the player from now on, so the chunk it spawned on gets loaded
+            // Stream around the player from now on, so the chunk it spawned on gets loaded.
+            // The spawn point is no longer needed as a target on this machine.
             if (_streamingController != null)
-                _streamingController.SetStreamingTarget(player.transform);
+            {
+                _streamingController.RegisterStreamingTarget(player.transform);
+                _streamingController.SetPrimaryTarget(player.transform);
+                _streamingController.ReleaseInitialTarget();
+            }
             else
                 this.LogError("No TerrainStreamingController: terrain won't follow the local player");
 
@@ -179,6 +187,9 @@ namespace Goodgulf.GameLogic
             }
 
             _localPlayer = null;
+
+            if (_streamingController != null)
+                _streamingController.UnregisterStreamingTarget(player.transform);
 
             if (PlayerCamera && PlayerCamera.TryGetComponent(out OrbitCamera orbitCamera))
                 orbitCamera.SetTarget(null);
