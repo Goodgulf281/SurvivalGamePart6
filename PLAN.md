@@ -49,9 +49,9 @@ Goal: a host and one client walk around the same terrain.
 
 How the pieces fit together:
 
-- **Startup:** the world path and the network path meet in `GameManager.SetupLocalPlayer`, which places the player and hands it to the camera, `Builder` and pathfinding.
+- **Startup:** `WorldState` starts streaming with the shared seed (Phase 2). The world path and the player path meet in `GameManager.SetupLocalPlayer`, which places the player and hands it to the camera, `Builder` and pathfinding.
 
-  ![Phase 1 player startup flow](docs/phase1-player-startup.svg)
+  ![Player startup flow](docs/phase1-player-startup.svg)
 
 - **Owner vs remote copy:** only the owner's copy reads input and moves; every other copy follows its `NetworkTransform`/`NetworkAnimator`.
 
@@ -74,45 +74,55 @@ Code (done on `claude/phase1-networked-player`; needs the editor setup below bef
 - [x] Spawn safety:
   - The local player is held (no gravity or movement) until the chunk under it has loaded locally.
   - It is then snapped to the ground below (`GameManager._groundMask`) and released.
-  - [ ] The server picks spawn points on already-loaded chunks. For now, PlayerSpawner's Spawns should sit inside the initial load radius around the spawn point.
+  - Server-side spawn-point selection moved to Phase 2. For now, PlayerSpawner's Spawns must sit inside the initial load radius around the spawn point.
 - [x] `TerrainPositionObjects` skips missing entries (the player is no longer a scene object).
 
 Editor setup:
 
-- [ ] Add a NetworkManager scene object (start from `FishNet/Demos/Prefabs/NetworkManager.prefab`):
+- [x] Add a NetworkManager scene object (start from `FishNet/Demos/Prefabs/NetworkManager.prefab`):
   - Add `NetworkBootstrap` and set the HUD's Auto Start Type to Disabled.
   - ObserverManager with a **SceneCondition**.
   - PlayerSpawner with **Add To Default Scene** checked, and a spawn point in **Spawns**.
   - The HUD, for starting host or client.
   - The NetworkManager must not carry a NetworkObject (§4).
-- [ ] Spawn point: an empty GameObject where players should appear. Assign it to `TerrainStreamingController.player` and to PlayerSpawner's Spawns.
-- [ ] Player prefab:
+- [x] Spawn point: an empty GameObject where players should appear. Assign it to `TerrainStreamingController.player` and to PlayerSpawner's Spawns.
+- [x] Player prefab:
   - Move the scene player into a prefab. Disable its `PlayerInput` component on the prefab.
   - Add `NetworkObject`, a client-authoritative `NetworkTransform` (Component Configuration = CharacterController) and a client-authoritative `NetworkAnimator`.
   - Assign it to PlayerSpawner and delete the scene player.
-- [ ] `GameManager`: assign the streaming controller and set **Ground Mask** to the terrain layer (the same mask `TerrainPositionObjects` uses).
-- [ ] MPPM scenario: Player Tags `Host` and `Client`; Main Editor = `Host`, Virtual Editor = `Client`.
+- [x] `GameManager`: assign the streaming controller and set **Ground Mask** to the terrain layer (the same mask `TerrainPositionObjects` uses).
+- [x] MPPM scenario: Player Tags `Host` and `Client`; Main Editor = `Host`, Virtual Editor = `Client`.
 
 Done when:
 
-- [ ] Host and client each see both players move smoothly, and each camera follows its own player.
-- [ ] Neither player falls through the terrain at spawn.
-- [ ] The F9 dumps from host and client still match.
+- [x] Host and client each see both players move smoothly, and each camera follows its own player.
+- [x] Neither player falls through the terrain at spawn.
+- [x] The F9 dumps from host and client still match.
 
 Expected until later phases: building is local to each player (Phase 3), and the host only streams terrain around its own player, so a distant client floats over unloaded ground on the host's screen (Phase 2).
 
 ## Phase 2: World sync
 
-- [ ] `WorldState`: a global NetworkObject (Is Global, Initialize Order -128, spawned by `ServerSpawner`) with `SyncVar<int> Seed`.
-  - The server sets the seed in `OnStartServer`.
-  - Clients apply it to `TerrainStreamingController`, `StreamingTerrainGeneratorJobs` and `AsyncTerrainPrefabPlacer.SetBaseSeed` before streaming starts.
-  - Streaming must not auto-start in `Start()`. It waits for the seed.
-- [ ] Multi-target streaming. Change `TerrainStreamingController` to follow a list of positions (`RegisterStreamingTarget` / `UnregisterStreamingTarget`):
-  - The load set is the union of the radii around all targets.
+- [x] `WorldState` (`Networking/WorldState.cs`): a global NetworkObject with `SyncVar<int> _seed`.
+  - The server sets the seed in `OnStartServer` (`-seed <n>` on the command line, else the Inspector default) and starts its own streaming.
+  - Clients call `TerrainStreamingController.BeginStreaming(seed)` in `OnStartClient`, which applies it to `AsyncTerrainPrefabPlacer.SetBaseSeed` and `StreamingTerrainGeneratorJobs.seed`. On the host the second call is ignored.
+  - Streaming no longer auto-starts in `Start()` while **Wait For World Seed** is on (the default). Turn it off to stream offline with the controller's own seed.
+  - Note: terrain heights don't use the seed today (`TerrainHeightJob` is a pure function of world position); only prefab placement does.
+- [x] Multi-target streaming. `TerrainStreamingController` follows a list of targets (`RegisterStreamingTarget` / `UnregisterStreamingTarget`, reference counted):
+  - The load set is the union of the radii around all targets; queued loads no target needs are dropped.
   - A chunk unloads only when it is outside the unload radius of every target.
-  - The server registers every player's transform (subscribe to `OnSpawned`/`OnRemoteConnectionState`).
-  - A pure client registers only its own player.
-  - The host registers everyone, and also renders chunks around remote players. That cost is accepted for host mode.
+  - The server registers every player in `ThirdPersonController.OnStartServer` (and unregisters in `OnStopServer`) rather than subscribing to `OnSpawned`.
+  - A pure client registers only its own player (`GameManager.RegisterLocalPlayer`), makes it the primary target and releases the spawn point.
+  - The host registers everyone (its own player twice, hence the reference count), and also renders chunks around remote players. That cost is accepted for host mode.
+  - `SetStreamingTarget` is gone. `Player()` now returns the primary target (the local player), so pathfinding still centres on it.
+- [ ] Editor setup for the two items above:
+  - Create a `WorldState` prefab: `NetworkObject` with **Is Global** on and **Initialize Order** -128, plus the `WorldState` component.
+  - Add a `ServerSpawner` to the NetworkManager and list the prefab in it.
+  - Check `TerrainStreamingController` → **Wait For World Seed** is on.
+- [ ] Test: host and client both load the world (it now waits for the seed), F9 dumps still match, and on the host a client that walks several chunks away has terrain loaded under it.
+- [ ] Spawn points (moved from Phase 1): the server picks a spawn point on a chunk it has already loaded, instead of relying on PlayerSpawner's Spawns sitting inside the initial load radius.
+  - Builds on multi-target streaming: the server knows which chunks are loaded around existing players.
+  - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).
 - [ ] Terrain edits:
   - `DepressTerrainAtPosition` and `RaiseTerrainAtPosition` become a ServerRpc request, with the server checking reach and rate.
   - The server applies the edit and appends `{chunkCoord, pos, radius, strength}` to a `SyncList<TerrainEdit>` on `WorldState`.
