@@ -115,11 +115,11 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - A pure client registers only its own player (`GameManager.RegisterLocalPlayer`), makes it the primary target and releases the spawn point.
   - The host registers everyone (its own player twice, hence the reference count), and also renders chunks around remote players. That cost is accepted for host mode.
   - `SetStreamingTarget` is gone. `Player()` now returns the primary target (the local player), so pathfinding still centres on it.
-- [ ] Editor setup for the two items above:
+- [x] Editor setup for the two items above:
   - Create a `WorldState` prefab: `NetworkObject` with **Is Global** on and **Initialize Order** -128, plus the `WorldState` component.
   - Add a `ServerSpawner` to the NetworkManager and list the prefab in it.
   - Check `TerrainStreamingController` → **Wait For World Seed** is on.
-- [ ] Test: host and client both load the world (it now waits for the seed), F9 dumps still match, and on the host a client that walks several chunks away has terrain loaded under it.
+- [x] Test: host and client both load the world (it now waits for the seed), F9 dumps still match, and on the host a client that walks several chunks away has terrain loaded under it.
 - [ ] Spawn points (moved from Phase 1): the server picks a spawn point on a chunk it has already loaded, instead of relying on PlayerSpawner's Spawns sitting inside the initial load radius.
   - Builds on multi-target streaming: the server knows which chunks are loaded around existing players.
   - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).
