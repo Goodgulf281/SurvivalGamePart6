@@ -214,8 +214,8 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
   - The agents stay scene objects rather than a spawnable prefab: as scene NetworkObjects the server spawns them automatically, and their patrol points and leader stay plain scene references, which work because only the server reads them.
 - [ ] Optional, editor: a GridCondition or DistanceCondition on the agents so clients only receive nearby NPCs.
 - [ ] Known limitation: the graph covers the chunks around one player (`TerrainStreamingController.Player()`, the host's player or, on a dedicated server, the first player). Agents near another, distant player have no graph there. Fix later by building the graph around every streaming target.
-- [ ] Editor setup: on each scene agent, add a `NetworkObject` and a `NetworkTransform` with **Client Authoritative** off. Leave `PlayerTransform` empty (Target Nearest Player fills it).
-- [ ] Test:
+- [x] Editor setup: on each scene agent, add a `NetworkObject` and a `NetworkTransform` with **Client Authoritative** off. Leave `PlayerTransform` empty (Target Nearest Player fills it).
+- [x] Test:
   - Host and client both see the agents patrol and move smoothly.
   - Approach/flee reacts to whichever player is nearest, including the client's player.
   - Build a wall across an agent's route: it paths around it (on the server).
