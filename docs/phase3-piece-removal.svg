@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="680" height="650" viewBox="0 0 680 650" role="img">
 <title>Networked piece removal flow</title>
-<desc>A destroy request from the owner client (piece IDs under the preview, sent with ServerRequestDestruct) and a collapse found by the RecalculationWorker end in BuildingArea.RemoveWeakConstructedItem or RemoveWeakConstructedItems on the server. Builder.OnConstructedItemRemoved then removes the record from the NetworkBuildingArea and invalidates pathfinding, and other clients destroy their local copy when Pieces.OnChange reports the removal.</desc>
+<desc>A destroy request from the owner client (piece IDs under the preview, sent with ServerRequestDestruct) and a collapse found by the RecalculationWorker end in BuildingArea.RemoveWeakConstructedItem or RemoveWeakConstructedItems on the server. Builder.OnConstructedItemRemoved then removes the record from the NetworkBuildingArea and invalidates pathfinding, and other clients destroy their local copy when Pieces.OnChange reports the removal. For a collapse the server first sends ObserversCollapse to the clients, which play the falling effect on their copies.</desc>
 <style>
 text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
 .th{font-size:14px;font-weight:500}.ts{font-size:12px}
@@ -30,10 +30,12 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,san
 <g class="teal"><rect x="225" y="262" width="230" height="56" rx="8" stroke-width="0.5"/><text class="th" x="340" y="280" text-anchor="middle" dominant-baseline="central">RemoveWeakConstructedItem</text><text class="ts" x="340" y="300" text-anchor="middle" dominant-baseline="central">BuildingArea: one or all weak</text></g>
 <g class="teal"><rect x="225" y="358" width="230" height="56" rx="8" stroke-width="0.5"/><text class="th" x="340" y="376" text-anchor="middle" dominant-baseline="central">OnConstructedItemRemoved</text><text class="ts" x="340" y="396" text-anchor="middle" dominant-baseline="central">Builder: record + pathfinding</text></g>
 <g class="teal"><rect x="225" y="454" width="230" height="56" rx="8" stroke-width="0.5"/><text class="th" x="340" y="472" text-anchor="middle" dominant-baseline="central">NetworkBuildingArea</text><text class="ts" x="340" y="492" text-anchor="middle" dominant-baseline="central">RemovePiece → SyncDictionary</text></g>
+<g class="purple"><rect x="490" y="262" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="565" y="280" text-anchor="middle" dominant-baseline="central">Collapse RPC</text><text class="ts" x="565" y="300" text-anchor="middle" dominant-baseline="central">ObserversCollapse</text></g>
 <g class="purple"><rect x="490" y="454" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="565" y="472" text-anchor="middle" dominant-baseline="central">Pieces.OnChange</text><text class="ts" x="565" y="492" text-anchor="middle" dominant-baseline="central">Record removed</text></g>
 <g class="purple"><rect x="490" y="550" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="565" y="568" text-anchor="middle" dominant-baseline="central">Local copy</text><text class="ts" x="565" y="588" text-anchor="middle" dominant-baseline="central">Destroyed</text></g>
 <path class="arr" d="M115 126 L115 194 L223 194" marker-end="url(#arrow)"/>
 <path class="arr" d="M455 98 L462 98 L462 290 L457 290" marker-end="url(#arrow)"/>
+<line class="arr" x1="455" y1="304" x2="488" y2="304" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
 <line class="arr" x1="340" y1="222" x2="340" y2="260" marker-end="url(#arrow)"/>
 <line class="arr" x1="340" y1="318" x2="340" y2="356" marker-end="url(#arrow)"/>
 <line class="arr" x1="340" y1="414" x2="340" y2="452" marker-end="url(#arrow)"/>

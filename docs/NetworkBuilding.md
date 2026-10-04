@@ -81,13 +81,13 @@ Pieces disappear for two reasons: a player destroys them, or the structural inte
 ### Server
 
 **RecalculationWorker (weak pieces collapse)**
-`Building/RecalculationWorker.cs`. The structural integrity check. On a background thread it runs Dijkstra over the pieces' neighbour graph to find each piece's distance to the ground; pieces beyond `_maxStrength` get an infinite distance. Back on the main thread (via `MainThreadDispatcher`) it calls `BuildingArea.RemoveWeakConstructedItems()` for each area it checked. Until Phase 4 it only checks the areas around the host's own player.
+`Building/RecalculationWorker.cs`. The structural integrity check. On a background thread it runs Dijkstra over the pieces' neighbour graph to find each piece's distance to the ground; pieces beyond `_maxStrength` get an infinite distance. Back on the main thread (via `MainThreadDispatcher`) it calls `BuildingArea.RemoveWeakConstructedItems()` for each area it checked. It only runs on the server, over the areas around every connected player (`Builder.UpdateWorkerAreas`).
 
 **ServerRequestDestruct (keep pieces in reach)**
 `PlayerBuilderInventoryBridge.ServerRequestDestruct`, a ServerRpc like the build request. It applies the same rate limit, then keeps only the IDs that are real pieces within reach of the player, logs how many it dropped, and passes the rest to `Builder.DestructConstructedItems`, which marks each one as unsupported (infinite distance) and removes it from its area.
 
 **RemoveWeakConstructedItem (BuildingArea: one or all weak)**
-`BuildingArea.RemoveWeakConstructedItem` (one piece, used by destroy) and `RemoveWeakConstructedItems` (every unsupported piece in the area, used by the worker), in `Building/BuildingArea.cs`. Each removes the piece from its neighbours and from the area, calls `Builder.OnConstructedItemRemoved`, then destroys the GameObject: immediately for a destroy, after 10 seconds for a collapse, with its rigidbody unfrozen so it visibly falls first. Every removal must go through these methods, or the clients would never hear about it.
+`BuildingArea.RemoveWeakConstructedItem` (one piece, used by destroy) and `RemoveWeakConstructedItems` (every unsupported piece in the area, used by the worker), in `Building/BuildingArea.cs`. `RemoveWeakConstructedItems` first sends the collapsing IDs to the area's clients (`Builder.NotifyCollapse` → `NetworkBuildingArea.ObserversCollapse`, see below). Each method removes the piece from its neighbours and from the area, calls `Builder.OnConstructedItemRemoved`, then destroys the GameObject: immediately for a destroy, after 10 seconds for a collapse, with its rigidbody unfrozen so it visibly falls first. Every removal must go through these methods, or the clients would never hear about it.
 
 **OnConstructedItemRemoved (Builder: record + pathfinding)**
 `Builder.OnConstructedItemRemoved`. The single hook for every removal: it unregisters the piece from `Builder`'s global list, asks the piece's `NetworkBuildingArea` to remove its record, and invalidates the pathfinding obstacle cache around it.
@@ -97,11 +97,16 @@ Pieces disappear for two reasons: a player destroys them, or the structural inte
 
 ### Other clients
 
+**Collapse RPC (ObserversCollapse)**
+`NetworkBuildingArea.ObserversCollapse(pieceIds)`, the dashed arrow. Only for collapses: `RemoveWeakConstructedItems` collects the collapsing IDs and, through `Builder.NotifyCollapse`, sends this ObserversRpc *before* removing anything. It skips the host (`ExcludeServer`), which already runs the effect on the real pieces. Each client hands its copies to the same falling effect the server uses (blue flash, unfrozen rigidbody, a push, destroyed after 10 s) and stops tracking them. An RPC arrives before the SyncType change (fishnet.md §13), so the record removal that follows finds nothing to destroy.
+
 **Pieces.OnChange (record removed)**
 The same callback as for building. For a Remove it destroys the local copy with that ID; for a Clear it destroys them all. The host skips it, since the server already destroyed the real piece.
 
 **Local copy (destroyed)**
-`NetworkBuildingArea.DestroyLocalPiece` destroys the copy and invalidates the client's pathfinding obstacle cache. For now a collapsed piece simply disappears on clients. Phase 4 adds a message to clients before the record is removed, so they can play the falling effect first.
+`NetworkBuildingArea.DestroyLocalPiece` destroys the copy and invalidates the client's pathfinding obstacle cache.
+
+A player's destroy has no effect: the piece just disappears. A collapse is handled by **Collapse RPC** first, so by the time its Remove arrives there is nothing left to destroy.
 
 ## Related code
 

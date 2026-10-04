@@ -12,6 +12,10 @@ namespace Goodgulf.Building
     ///
     /// Heavy graph calculations are performed on a worker thread,
     /// while Unity API access is strictly limited to the main thread.
+    ///
+    /// In a network session this only runs on the server: clients have copies of the
+    /// pieces without ConstructedItem data, and collapses reach them through
+    /// NetworkBuildingArea.
     /// </summary>
     public class RecalculationWorker : MonoBehaviour
     {
@@ -114,6 +118,10 @@ namespace Goodgulf.Building
         /// </summary>
         void Update()
         {
+            // Structural integrity is server authoritative
+            if (Builder.IsNetworkClientOnly)
+                return;
+
             _timer += Time.deltaTime;
 
             // Start recalculation only if:
@@ -125,8 +133,12 @@ namespace Goodgulf.Building
                 _timer = 0;
                 _lastStartTime = Time.time;
 
+                // Work on a snapshot: Builder replaces _buildingAreas every few seconds,
+                // which must not happen under the worker thread's feet
+                List<BuildingArea> areas = new List<BuildingArea>(_buildingAreas);
+
                 // Create worker thread
-                _thread = new Thread(Recalculate);
+                _thread = new Thread(() => Recalculate(areas));
 
                 if (_debugEnabled)
                     Debug.Log($"Starting Recalculation worker thread at: {_lastStartTime}");
@@ -134,9 +146,9 @@ namespace Goodgulf.Building
                 // IMPORTANT:
                 // Grounded checks must run on the MAIN THREAD
                 // because they use Unity physics and colliders.
-                for (int i = 0; i < _buildingAreas.Count; i++)
+                for (int i = 0; i < areas.Count; i++)
                 {
-                    BuildingArea a = _buildingAreas[i];
+                    BuildingArea a = areas[i];
 
                     foreach (ConstructedItem c in a.ConstructedItems)
                     {
@@ -173,7 +185,7 @@ namespace Goodgulf.Building
         /// Builds graph structures and performs Dijkstra calculations.
         /// MUST NOT call Unity API directly.
         /// </summary>
-        private void Recalculate()
+        private void Recalculate(List<BuildingArea> areas)
         {
             // Store all nodes per building area
             Dictionary<string, ConstructedItem[]> buildingAreaAllItems =
@@ -183,9 +195,9 @@ namespace Goodgulf.Building
             Dictionary<string, Dictionary<int, float>> buildingAreaItemsInRange =
                 new Dictionary<string, Dictionary<int, float>>();
 
-            for (int i = 0; i < _buildingAreas.Count; i++)
+            for (int i = 0; i < areas.Count; i++)
             {
-                BuildingArea a = _buildingAreas[i];
+                BuildingArea a = areas[i];
 
                 // Build Dijkstra graph: nodeId -> list of edges
                 Dictionary<int, List<Edge>> graph = new Dictionary<int, List<Edge>>();
@@ -228,9 +240,9 @@ namespace Goodgulf.Building
             MainThreadDispatcher.Enqueue(() =>
             {
                 // Apply calculated distances to ConstructedItems
-                for (int i = 0; i < _buildingAreas.Count; i++)
+                for (int i = 0; i < areas.Count; i++)
                 {
-                    BuildingArea a = _buildingAreas[i];
+                    BuildingArea a = areas[i];
 
                     Dictionary<int, float> allNodesInRange =
                         buildingAreaItemsInRange[a.Id];
@@ -268,16 +280,16 @@ namespace Goodgulf.Building
 
                 if (_debugEnabled)
                     Debug.Log(
-                        $"Recalculation for {_buildingAreas.Count} areas ready in: " +
+                        $"Recalculation for {areas.Count} areas ready in: " +
                         $"{Time.time - _lastStartTime} seconds");
 
                 // Post-processing per building area
-                for (int i = 0; i < _buildingAreas.Count; i++)
+                for (int i = 0; i < areas.Count; i++)
                 {
                     if (_debugEnabled)
-                        _buildingAreas[i].ShowDistances();
+                        areas[i].ShowDistances();
 
-                    _buildingAreas[i].RemoveWeakConstructedItems();
+                    areas[i].RemoveWeakConstructedItems();
                 }
             });
         }
