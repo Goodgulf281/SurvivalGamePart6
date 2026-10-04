@@ -136,7 +136,7 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - A per-chunk count of applied edits makes each edit apply exactly once per load of a chunk, whether it arrives live or is replayed.
   - Every machine that applies an edit live calls `InvalidateHeightmapCache` and `RequestDirtyRegionRebuild`, since `TerrainGraphIntegration` still runs everywhere (Phase 5 moves it to the server).
   - Edits only live for the session; saving them is Phase 6.
-- [ ] Test: no editor setup needed (the limits are new fields on the `WorldState` component).
+- [x] Test: no editor setup needed (the limits are new fields on the `WorldState` component).
   - Raise and depress terrain on the host and on the client; both see every edit.
   - Edit a chunk, walk until it unloads (beyond the unload radius) and come back: the edit is still there. A client that joins after edits were made sees them too.
   - After edits, the F9 dumps from host and client still match (the heightmap hashes include the edits).
