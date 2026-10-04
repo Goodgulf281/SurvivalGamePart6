@@ -21,6 +21,11 @@
 //              • A per-chunk count of applied edits makes sure each
 //                edit is applied exactly once per load of a chunk.
 //
+//              Persistence (server): the world (seed, pieces, terrain
+//              edits) is loaded from WorldSaveFile when the server starts
+//              and saved when it stops, or on request (SaveWorld /
+//              LoadWorld, bound to the save/load keys through Builder).
+//
 //              Put this on a prefab with a NetworkObject (Is Global on,
 //              Initialize Order -128) listed in the NetworkManager's
 //              ServerSpawner. TerrainStreamingController must have
@@ -31,6 +36,8 @@
 using System;
 using System.Collections.Generic;
 using FishNet.Connection;
+using FishNet.Transporting;
+using Goodgulf.Building;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using Goodgulf.Logging;
@@ -65,6 +72,13 @@ namespace Goodgulf.Networking
 
         [Tooltip("Largest allowed edit depth or height, in metres.")]
         [SerializeField] private float _maxEditDepth = 2f;
+
+        [Header("Persistence (server)")]
+        [Tooltip("Load the world save when the server starts. Its seed replaces the default and -seed.")]
+        [SerializeField] private bool _loadSaveOnStart = true;
+
+        [Tooltip("Save the world when the server stops.")]
+        [SerializeField] private bool _saveOnServerStop = true;
 
         [Header("Debug")]
         [SerializeField] private bool _debugEnabled = true;
@@ -135,10 +149,42 @@ namespace Goodgulf.Networking
         {
             // Set here so the value goes out in the spawn message
             _seed.Value = ReadSeedFromArgs(Environment.GetCommandLineArgs(), _defaultSeed);
+
+            // A saved world brings its own seed (and edits, which must be in the list
+            // before streaming starts so the first chunks replay them)
+            WorldSaveData save = null;
+            if (_loadSaveOnStart && WorldSaveFile.TryLoad(out save))
+            {
+                _seed.Value = save.Seed;
+                _terrainEdits.AddRange(save.TerrainEdits);
+                this.LogInfo($"Loaded world save: seed {save.Seed}, {save.TerrainEdits.Count} terrain edit(s), {save.Pieces.Count} piece(s)");
+            }
+
             this.LogInfo($"Server world seed: {_seed.Value}");
+
+            ServerManager.OnRemoteConnectionState += ServerManager_OnRemoteConnectionState;
 
             // The server needs the world too (colliders, pathfinding, building)
             StartStreaming();
+
+            // Pieces are rebuilt as their chunks load
+            if (save != null && Builder.Instance != null)
+                Builder.Instance.QueueSavedPieces(save.Pieces);
+        }
+
+        public override void OnStopServer()
+        {
+            ServerManager.OnRemoteConnectionState -= ServerManager_OnRemoteConnectionState;
+
+            if (_saveOnServerStop)
+                SaveWorld();
+        }
+
+        private void ServerManager_OnRemoteConnectionState(NetworkConnection conn, RemoteConnectionStateArgs args)
+        {
+            // Forget a disconnected client's rate limit (client IDs are reused)
+            if (args.ConnectionState == RemoteConnectionState.Stopped)
+                _lastEditTime.Remove(conn.ClientId);
         }
 
         public override void OnStartClient()
@@ -146,6 +192,75 @@ namespace Goodgulf.Networking
             // On the host the server already started streaming; BeginStreaming ignores the repeat
             this.LogInfo($"Client received world seed: {_seed.Value}");
             StartStreaming();
+        }
+
+        // ==================================================================
+        // Persistence (server)
+        // ==================================================================
+
+        /// <summary>
+        /// Server: write the seed, every piece and the terrain edits to the world save.
+        /// </summary>
+        public bool SaveWorld()
+        {
+            if (!IsServerInitialized)
+            {
+                this.LogWarning("SaveWorld: only the server can save the world");
+                return false;
+            }
+
+            if (Builder.Instance == null)
+                return false;
+
+            WorldSaveData data = new WorldSaveData
+            {
+                Seed = _seed.Value,
+                Pieces = Builder.Instance.GetSavedPieces(),
+                TerrainEdits = new List<TerrainEdit>(_terrainEdits)
+            };
+
+            return WorldSaveFile.Save(data);
+        }
+
+        /// <summary>
+        /// Server: load the world save into the running session. Only into an untouched
+        /// world with the same seed: terrain can't be regenerated with another seed while
+        /// players are in it, and loading on top of existing pieces would duplicate them.
+        /// </summary>
+        public bool LoadWorld()
+        {
+            if (!IsServerInitialized)
+            {
+                this.LogWarning("LoadWorld: only the server can load the world");
+                return false;
+            }
+
+            if (!WorldSaveFile.TryLoad(out WorldSaveData save))
+            {
+                this.LogWarning($"LoadWorld: no world save at {WorldSaveFile.FilePath}");
+                return false;
+            }
+
+            if (save.Seed != _seed.Value)
+            {
+                this.LogWarning($"LoadWorld: the save uses seed {save.Seed} but this world uses {_seed.Value}; restart the server to load it");
+                return false;
+            }
+
+            if (Builder.Instance == null ||
+                Builder.Instance.PieceCount > 0 || Builder.Instance.PendingSavedPieceCount > 0 ||
+                _terrainEdits.Count > 0)
+            {
+                this.LogWarning("LoadWorld: the world already has pieces or terrain edits; loading would duplicate them");
+                return false;
+            }
+
+            // Applied live to loaded chunks and replayed on the others, like new edits
+            _terrainEdits.AddRange(save.TerrainEdits);
+            Builder.Instance.QueueSavedPieces(save.Pieces);
+
+            this.LogInfo($"Loaded world save: {save.TerrainEdits.Count} terrain edit(s), {save.Pieces.Count} piece(s)");
+            return true;
         }
 
         // ==================================================================

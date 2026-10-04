@@ -1216,28 +1216,28 @@ namespace Goodgulf.Building
         }
 
         /// <summary>
-        /// Saves all BuildingAreas to JSON files.
+        /// Saves the world (pieces, terrain edits, seed) through WorldState. Server only.
         /// </summary>
         public void SaveAllBuildingAreas()
         {
-            // Networked: only the server builds; a client would create pieces nobody else sees
+            // Networked: only the server owns the world
             if (IsNetworkClientOnly)
             {
                 Debug.LogWarning("Builder.SaveAllBuildingAreas(): only the server can do this in a network session");
                 return;
             }
 
-            foreach (var area in _buildingAreasById)
+            if (WorldState.Instance == null)
             {
-                string json = JsonUtility.ToJson(area.Value, true);
-                string path = Path.Combine(Application.persistentDataPath, area.Key + ".json");
-
-                File.WriteAllText(path, json);
+                Debug.LogWarning("Builder.SaveAllBuildingAreas(): no WorldState; saving needs a network session");
+                return;
             }
+
+            WorldState.Instance.SaveWorld();
         }
 
         /// <summary>
-        /// Loads predefined BuildingArea JSON files and reconstructs buildings.
+        /// Loads the saved world into the current (empty) world through WorldState. Server only.
         /// </summary>
         public void LoadBuildingArea()
         {
@@ -1248,31 +1248,130 @@ namespace Goodgulf.Building
                 return;
             }
 
-            string[] files = { "1.json", "2.json", "3.json" };
-
-            foreach (string filename in files)
+            if (WorldState.Instance == null)
             {
-                string path = Path.Combine(Application.persistentDataPath, filename);
-                if (!File.Exists(path))
-                    continue;
+                Debug.LogWarning("Builder.LoadBuildingArea(): no WorldState; loading needs a network session");
+                return;
+            }
 
-                Debug.Log($"Builder.LoadBuildingArea(): loading <color=yellow>{filename}</color>");
+            WorldState.Instance.LoadWorld();
+        }
 
-                string json = File.ReadAllText(path);
-                BuildingArea area = JsonUtility.FromJson<BuildingArea>(json);
+        // ==================================================================
+        // Persistence (server)
+        // ==================================================================
 
-                _buildingAreasById.Add(area.Id, area);
+        // Saved pieces waiting for their terrain chunk to load, by chunk, in build order
+        private readonly Dictionary<Vector2Int, List<SavedPiece>> _pendingSavedPieces =
+            new Dictionary<Vector2Int, List<SavedPiece>>();
+        private bool _listeningForChunkLoads;
 
-                // Preserve constructed items before clearing
-                ConstructedItem[] constructedItems = area.ConstructedItems;
-                area.ClearAllConstructedItems();
+        /// <summary>Number of pieces that exist on the server.</summary>
+        public int PieceCount => _allConstructedItems.Count;
 
-                // Re-instantiate all items
-                foreach (ConstructedItem c in constructedItems)
+        /// <summary>Number of saved pieces still waiting for their chunk to load.</summary>
+        public int PendingSavedPieceCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (List<SavedPiece> pieces in _pendingSavedPieces.Values)
+                    count += pieces.Count;
+                return count;
+            }
+        }
+
+        /// <summary>
+        /// Every piece on the server, in build order (by ID), for the world save.
+        /// </summary>
+        public List<SavedPiece> GetSavedPieces()
+        {
+            List<ConstructedItem> items = new List<ConstructedItem>(_allConstructedItems.Values);
+            items.Sort((a, b) => a.Id.CompareTo(b.Id));
+
+            List<SavedPiece> pieces = new List<SavedPiece>(items.Count);
+            foreach (ConstructedItem item in items)
+            {
+                pieces.Add(new SavedPiece
                 {
-                    InstantiateBuildingPrefab(c.BuildTemplateId, c.Position, c.Rotation, 0);
+                    TemplateId = item.BuildTemplateId,
+                    Position = item.Position,
+                    Rotation = item.Rotation,
+                    SnapIndex = item.SnapPointIndex
+                });
+            }
+
+            // Pieces waiting for their chunk are part of the world too
+            foreach (List<SavedPiece> pending in _pendingSavedPieces.Values)
+                pieces.AddRange(pending);
+
+            return pieces;
+        }
+
+        /// <summary>
+        /// Server: rebuild saved pieces. Pieces on loaded chunks are built now; the rest when
+        /// their chunk loads (they need its terrain for grounding). The NetworkBuildingArea
+        /// records then reach clients like any other build, late joiners included.
+        /// </summary>
+        public void QueueSavedPieces(List<SavedPiece> pieces)
+        {
+            if (pieces == null || pieces.Count == 0)
+                return;
+
+            if (_streamingController == null)
+                _streamingController = FindFirstObjectByType<TerrainStreamingController>();
+
+            foreach (SavedPiece piece in pieces)
+            {
+                Vector2Int chunk = GetTerrainIndex(piece.Position);
+                if (!_pendingSavedPieces.TryGetValue(chunk, out List<SavedPiece> list))
+                {
+                    list = new List<SavedPiece>();
+                    _pendingSavedPieces.Add(chunk, list);
+                }
+                list.Add(piece);
+            }
+
+            if (!_listeningForChunkLoads && _streamingController != null)
+            {
+                _streamingController.onChunkLoadComplete.AddListener(BuildPendingSavedPieces);
+                _listeningForChunkLoads = true;
+            }
+
+            // Chunks that are already loaded don't get another load event
+            foreach (Vector2Int chunk in new List<Vector2Int>(_pendingSavedPieces.Keys))
+            {
+                if (_streamingController != null && _streamingController.TryGetLoadedTerrain(chunk, out _))
+                    BuildPendingSavedPieces(chunk);
+            }
+        }
+
+        /// <summary>
+        /// Builds the saved pieces of a chunk that has finished loading, in build order.
+        /// </summary>
+        private void BuildPendingSavedPieces(Vector2Int chunk)
+        {
+            if (!_pendingSavedPieces.TryGetValue(chunk, out List<SavedPiece> pieces))
+                return;
+
+            _pendingSavedPieces.Remove(chunk);
+
+            int built = 0;
+            foreach (SavedPiece piece in pieces)
+            {
+                try
+                {
+                    InstantiateBuildingPrefab(piece.TemplateId, piece.Position, piece.Rotation, piece.SnapIndex);
+                    built++;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"Builder: could not rebuild a saved piece (template {piece.TemplateId}) at {piece.Position}: {e.Message}");
                 }
             }
+
+            if (_debugEnabled)
+                Debug.Log($"Builder: rebuilt {built} of {pieces.Count} saved piece(s) on chunk {chunk}");
         }
 
         /// <summary>

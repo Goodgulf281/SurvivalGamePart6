@@ -6,7 +6,8 @@
 //              same edits in the same order: live to loaded chunks, and
 //              replayed when a chunk loads later.
 //
-//              Plain public fields so FishNet generates the serializer.
+//              Plain public fields so FishNet generates the serializer;
+//              [Serializable] so the world save (JsonUtility) can store it.
 // Author:      Goodgulf
 // ============================================================
 
@@ -18,6 +19,7 @@ namespace Goodgulf.TerrainUtils
     /// A single terrain height edit. Positive <see cref="Depth"/> pushes the terrain down,
     /// negative raises it (see <see cref="TerrainUtils.PushDownTerrain"/>).
     /// </summary>
+    [System.Serializable]
     public struct TerrainEdit
     {
         /// <summary>Chunk the edit belongs to (the chunk containing <see cref="Position"/>).</summary>
