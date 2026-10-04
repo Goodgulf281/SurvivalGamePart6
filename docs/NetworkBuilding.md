@@ -65,7 +65,7 @@ After it returns, `ServerRequestBuild` consumes one item from the player's inven
 `NetworkBuildingArea.Pieces_OnChange`. Runs on each client when the dictionary changes. For an Add or Set it builds the piece; the host skips this, because the server's real piece is already in its scene. Late joiners and areas that come into view are handled in `OnStartClient`, which builds every record that already exists. Building is idempotent, so a record delivered both ways is built once. `OnStartClient` also draws the area outline locally (`Builder.CreateAreaOutline`).
 
 **Local copy (build prefab copy)**
-`Builder.InstantiatePieceCopy`. Instantiates the same build prefab under the area's object, at the recorded position and rotation, with the same snap offsets as the server, and gives its `ConstructedItemBehaviour` the server's piece ID. It has no `ConstructedItem`: grounding, neighbours and structural integrity only exist on the server. The client also invalidates its own pathfinding obstacle cache, because pathfinding still runs on every machine until Phase 5.
+`Builder.InstantiatePieceCopy`. Instantiates the same build prefab under the area's object, at the recorded position and rotation, with the same snap offsets as the server, and gives its `ConstructedItemBehaviour` the server's piece ID. It has no `ConstructedItem`: grounding, neighbours and structural integrity only exist on the server. Clients don't touch pathfinding: it only runs on the server (Phase 5), which invalidated the obstacle cache when it built the real piece.
 
 ## Removing pieces
 
@@ -104,7 +104,7 @@ Pieces disappear for two reasons: a player destroys them, or the structural inte
 The same callback as for building. For a Remove it destroys the local copy with that ID; for a Clear it destroys them all. The host skips it, since the server already destroyed the real piece.
 
 **Local copy (destroyed)**
-`NetworkBuildingArea.DestroyLocalPiece` destroys the copy and invalidates the client's pathfinding obstacle cache.
+`NetworkBuildingArea.DestroyLocalPiece` destroys the copy. The server already updated pathfinding when it removed the real piece.
 
 A player's destroy has no effect: the piece just disappears. A collapse is handled by **Collapse RPC** first, so by the time its Remove arrives there is nothing left to destroy.
 

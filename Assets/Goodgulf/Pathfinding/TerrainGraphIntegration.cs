@@ -746,8 +746,18 @@ namespace Goodgulf.Pathfinding
         /// Call this after <see cref="StreamingTerrainGeneratorJobs.GenerateChunk"/>
         /// modifies a chunk's terrain data.
         /// </summary>
-        public void InvalidateHeightmapCache(Vector2Int chunkCoord) =>
+        public void InvalidateHeightmapCache(Vector2Int chunkCoord)
+        {
+            // Not initialized (e.g. a pure client, where pathfinding doesn't run): nothing to invalidate
+            if (Graph == null) return;
             _heightmapDirty.Add(chunkCoord);
+        }
+
+        /// <summary>
+        /// True once <see cref="Initialize"/> has built the graph. Pathfinding only runs on the
+        /// server (or offline); on pure clients this component is disabled and never initialized.
+        /// </summary>
+        public bool IsInitialized => Graph != null;
 
         private void DisposeJobNativeArrays()
         {
@@ -765,6 +775,9 @@ namespace Goodgulf.Pathfinding
         /// </summary>
         public void RequestDirtyRegionRebuild(Vector3 worldMin, Vector3 worldMax)
         {
+            // Not initialized: there is no graph to rebuild, and the queue would only grow
+            if (Graph == null) return;
+
             _pendingDirtyRegions.Enqueue(
                 DirtyRegion.FromWorldAABB(worldMin, worldMax, _config).Expanded(2));
         }

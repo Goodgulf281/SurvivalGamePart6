@@ -1,6 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using FishNet;
+using FishNet.Connection;
+using FishNet.Object;
 using Goodgulf.Logging;
 
 #if UNITY_EDITOR
@@ -45,9 +48,16 @@ namespace Goodgulf.Pathfinding
     ///
     /// The agent does NOT use Unity's NavMesh — all movement is driven by
     /// following the path produced by <see cref="AStarSearch"/>.
+    ///
+    /// Networked (FishNet): server authoritative. Only the server runs the
+    /// behaviour, path requests and movement (pathfinding only exists there);
+    /// clients see the agent through a server-authoritative NetworkTransform.
+    /// Put a NetworkObject and a NetworkTransform (Client Authoritative off) on
+    /// the agent. Patrol points and the leader are plain references, which work
+    /// because they are only read on the server.
     /// </summary>
     [SelectionBase]
-    public class PathfindingAgent : MonoBehaviour, IDebuggable
+    public class PathfindingAgent : NetworkBehaviour, IDebuggable
     {
         // =====================================================================
         // Inspector — Movement
@@ -94,8 +104,12 @@ namespace Goodgulf.Pathfinding
         [Header("Line of Sight")]
         public LOSBehavior LOSBehaviour = LOSBehavior.None;
 
-        [Tooltip("Reference to the player transform for LOS detection.")]
+        [Tooltip("Reference to the player transform for LOS detection. " +
+                 "Overwritten with the nearest player when Target Nearest Player is on.")]
         public Transform PlayerTransform;
+
+        [Tooltip("On the server, use the nearest connected player as PlayerTransform for LOS approach/flee.")]
+        public bool TargetNearestPlayer = true;
 
         [Tooltip("Distance within which the LOS check activates.")]
         public float LOSActivationDistance = 20f;
@@ -157,6 +171,10 @@ namespace Goodgulf.Pathfinding
         // Flocking offset from leader — computed once when follower attaches
         private Vector3 _flockOffset = Vector3.zero;
 
+        // Nearest-player lookup is throttled; players don't need re-checking every frame
+        private float _nearestPlayerTimer = 0f;
+        private const float NearestPlayerInterval = 0.5f;
+
         // =====================================================================
         // Unity lifecycle
         // =====================================================================
@@ -171,7 +189,14 @@ namespace Goodgulf.Pathfinding
 
         private void Update()
         {
+            // Server authoritative: clients only see the NetworkTransform result
+            if (!IsServerInitialized)
+                return;
+
             _pathCooldown -= Time.deltaTime;
+
+            if (TargetNearestPlayer)
+                UpdateNearestPlayer();
 
             // Priority: LOS overrides other modes
             if (EvaluateLOS())
@@ -413,6 +438,40 @@ namespace Goodgulf.Pathfinding
                 away.y = 0;
                 transform.position += away.normalized * (FollowerSeparation * 0.1f);
             }
+        }
+
+        // =====================================================================
+        // Nearest player (server)
+        // =====================================================================
+
+        /// <summary>
+        /// Points <see cref="PlayerTransform"/> at the nearest connected player's object.
+        /// </summary>
+        private void UpdateNearestPlayer()
+        {
+            _nearestPlayerTimer -= Time.deltaTime;
+            if (_nearestPlayerTimer > 0f)
+                return;
+            _nearestPlayerTimer = NearestPlayerInterval;
+
+            Transform nearest = null;
+            float bestSqr = float.MaxValue;
+
+            foreach (NetworkConnection conn in InstanceFinder.ServerManager.Clients.Values)
+            {
+                if (conn.FirstObject == null)
+                    continue;
+
+                Transform candidate = conn.FirstObject.transform;
+                float sqr = (candidate.position - transform.position).sqrMagnitude;
+                if (sqr < bestSqr)
+                {
+                    bestSqr = sqr;
+                    nearest = candidate;
+                }
+            }
+
+            PlayerTransform = nearest;
         }
 
         // =====================================================================

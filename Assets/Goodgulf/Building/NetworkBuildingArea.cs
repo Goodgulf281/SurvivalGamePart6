@@ -26,7 +26,6 @@ using System.Collections.Generic;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using Goodgulf.Logging;
-using Goodgulf.Pathfinding;
 using UnityEngine;
 
 namespace Goodgulf.Building
@@ -178,8 +177,6 @@ namespace Goodgulf.Building
                 if (piece == null)
                     continue;
 
-                Vector3 position = piece.transform.position;
-
                 if (piece.TryGetComponent(out ConstructedItemBehaviour cib))
                 {
                     // Same effect as the server: blue flash, unfreeze, push, destroy after 10 s
@@ -191,8 +188,6 @@ namespace Goodgulf.Building
                     Destroy(piece);
                 }
 
-                if (TerrainGraphIntegration.Instance != null)
-                    TerrainGraphIntegration.Instance.InvalidateObstacleCache(position, Builder.ObstacleInvalidationRadius);
             }
 
             if (_debugEnabled)
@@ -245,10 +240,6 @@ namespace Goodgulf.Building
                 return;
 
             _localPieces[record.Id] = piece;
-
-            // Pathfinding still runs on every client until Phase 5
-            if (TerrainGraphIntegration.Instance != null)
-                TerrainGraphIntegration.Instance.InvalidateObstacleCache(record.Position, Builder.ObstacleInvalidationRadius);
         }
 
         private void DestroyLocalPiece(int pieceId)
@@ -261,12 +252,7 @@ namespace Goodgulf.Building
             if (piece == null)
                 return;
 
-            Vector3 position = piece.transform.position;
             Destroy(piece);
-
-            // Pathfinding still runs on every client until Phase 5
-            if (TerrainGraphIntegration.Instance != null)
-                TerrainGraphIntegration.Instance.InvalidateObstacleCache(position, Builder.ObstacleInvalidationRadius);
         }
     }
 }
