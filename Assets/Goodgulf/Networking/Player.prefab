@@ -79,9 +79,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 416524a845aa08c45a3ee241034c631e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _componentIndexCache: 255
+  _componentIndexCache: 0
   _addedNetworkObject: {fileID: 5746065596422262553}
-  _networkObjectCache: {fileID: 0}
+  _networkObjectCache: {fileID: 5746065596422262553}
   walkSpeed: 4
   runSpeed: 20
   acceleration: 10
@@ -138,9 +138,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b2726107473f3a044a75aec08790f9bb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _componentIndexCache: 255
+  _componentIndexCache: 1
   _addedNetworkObject: {fileID: 5746065596422262553}
-  _networkObjectCache: {fileID: 0}
+  _networkObjectCache: {fileID: 5746065596422262553}
   _debugEnabled: 1
 --- !u!114 &4413430906116791714
 MonoBehaviour:
@@ -172,7 +172,11 @@ MonoBehaviour:
   <ComponentIndex>k__BackingField: 0
   <PredictedSpawn>k__BackingField: {fileID: 0}
   <PredictedOwner>k__BackingField: {fileID: 0}
-  NetworkBehaviours: []
+  NetworkBehaviours:
+  - {fileID: 7031538990317656592}
+  - {fileID: 1398785176191652371}
+  - {fileID: 7284780678121245189}
+  - {fileID: 2832827559439400926}
   InitializedParentNetworkBehaviour: {fileID: 0}
   InitializedNestedNetworkObjects: []
   RuntimeParentNetworkBehaviour: {fileID: 0}
@@ -183,7 +187,7 @@ MonoBehaviour:
   _initializeOrder: 0
   _preventDespawnOnDisconnect: 0
   _defaultDespawnType: 0
-  _initializedTimestamp: 0
+  _initializedTimestamp: -8584104896907695584
   _localLevelOfDetailCalculationType: 0
   _useLevelOfDetail: 0
   _useRootLevelOfDetail: 1
@@ -202,15 +206,15 @@ MonoBehaviour:
   _spectatorInterpolation: 2
   _enableTeleport: 0
   _teleportThreshold: 1
-  <PrefabId>k__BackingField: 65535
+  <PrefabId>k__BackingField: 6
   <SpawnableCollectionId>k__BackingField: 0
   <AssetPathHash>k__BackingField: 9206943598663267847
   SceneId: 0
   SerializedTransformProperties:
-    Position: {x: 0, y: 0, z: 0}
-    Rotation: {x: 0, y: 0, z: 0, w: 0}
-    Scale: {x: 0, y: 0, z: 0}
-    IsValid: 0
+    Position: {x: 0, y: 0, z: 116}
+    Rotation: {x: 0, y: 0, z: 0, w: 1}
+    Scale: {x: 1, y: 1, z: 1}
+    IsValid: 1
 --- !u!114 &7284780678121245189
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -223,9 +227,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a2836e36774ca1c4bbbee976e17b649c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _componentIndexCache: 255
+  _componentIndexCache: 2
   _addedNetworkObject: {fileID: 5746065596422262553}
-  _networkObjectCache: {fileID: 0}
+  _networkObjectCache: {fileID: 5746065596422262553}
   _componentConfiguration: 0
   _synchronizeParent: 0
   _packing:
@@ -269,9 +273,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e8cac635f24954048aad3a6ff9110beb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _componentIndexCache: 255
+  _componentIndexCache: 3
   _addedNetworkObject: {fileID: 5746065596422262553}
-  _networkObjectCache: {fileID: 0}
+  _networkObjectCache: {fileID: 5746065596422262553}
   IgnoredParameters: []
   _animator: {fileID: 0}
   _synchronizeWhenDisabled: 0
