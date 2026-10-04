@@ -243,6 +243,10 @@ namespace Goodgulf.Building
         /// </summary>
         public void ShowDistance()
         {
+            // Client copies of networked pieces have no ConstructedItem (integrity runs on the server)
+            if (constructedItem == null)
+                return;
+
             if (_debugEnabled)
             {
                 string text = "[" + id + "]-<" + constructedItem.Distance + ">";

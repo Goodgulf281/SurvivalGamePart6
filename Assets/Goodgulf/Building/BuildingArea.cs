@@ -351,6 +351,9 @@ namespace Goodgulf.Building
                     // Remove from area
                     _constructedItems.Remove(c);
 
+                    // Unregister globally (and, on a server, from the clients)
+                    Builder.Instance.OnConstructedItemRemoved(c);
+
                     // Trigger visual feedback and destroy
                     c.ConstructedItemBehaviour.SetMeshColor(new Color(0, 0, 1.0f));
                     c.ConstructedItemBehaviour.RemoveConstructedItem(true);
@@ -386,6 +389,9 @@ namespace Goodgulf.Building
 
                 // Remove from area
                 _constructedItems.Remove(constructedItem);
+
+                // Unregister globally (and, on a server, from the clients)
+                Builder.Instance.OnConstructedItemRemoved(constructedItem);
 
                 // Trigger visual feedback and destroy
                 constructedItem.ConstructedItemBehaviour.SetMeshColor(Color.yellow);
