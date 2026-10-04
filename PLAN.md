@@ -144,6 +144,16 @@ Expected until later phases: building is local to each player (Phase 3), and the
 
 ## Phase 3: Building (one networked object per BuildingArea)
 
+How the pieces fit together (each block is explained in [docs/NetworkBuilding.md](docs/NetworkBuilding.md)):
+
+- **Placing a piece:** the client keeps the preview local and asks the server, which validates, builds the real piece and records it; other clients build a copy from the record.
+
+  ![Networked build request flow](docs/phase3-build-request.svg)
+
+- **Removing pieces:** a destroy request and a structural collapse both end in `Builder.OnConstructedItemRemoved`, which removes the record so clients destroy their copy.
+
+  ![Networked piece removal flow](docs/phase3-piece-removal.svg)
+
 - [x] `NetworkBuildingArea` (`Building/NetworkBuildingArea.cs`): a `NetworkBehaviour` for one `BuildingArea`.
   - `SyncVar<string> _areaId`; the position is the NetworkObject's own transform, so no extra SyncVar.
   - `SyncDictionary<int, PieceRecord> _pieces`, where `PieceRecord` is a struct `{ int Id; int TemplateId; Vector3 Position; Quaternion Rotation; int SnapIndex; }`.
