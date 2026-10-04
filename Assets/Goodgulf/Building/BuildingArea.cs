@@ -338,6 +338,18 @@ namespace Goodgulf.Building
         /// </summary>
         public void RemoveWeakConstructedItems()
         {
+            // Networked: tell the clients which pieces collapse before their records are
+            // removed, so they play the falling effect instead of just deleting them
+            List<int> collapsing = new List<int>();
+            foreach (ConstructedItem c in _constructedItems)
+            {
+                if (float.IsPositiveInfinity(c.Distance))
+                    collapsing.Add(c.Id);
+            }
+
+            if (collapsing.Count > 0)
+                Builder.Instance.NotifyCollapse(Id, collapsing.ToArray());
+
             for (int i = _constructedItems.Count - 1; i >= 0; i--)
             {
                 ConstructedItem c = _constructedItems[i];

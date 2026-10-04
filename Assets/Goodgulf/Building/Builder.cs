@@ -14,6 +14,7 @@ using Goodgulf.Networking;
 using Goodgulf.Pathfinding;
 using FishNet;
 using FishNet.Object;
+using FishNet.Connection;
 
 namespace Goodgulf.Building
 {
@@ -283,26 +284,55 @@ namespace Goodgulf.Building
         /// </summary>
         private void UpdateWorkerAreas()
         {
-            // No local player (e.g. a dedicated server) or no areas yet: nothing to recalculate.
-            // Phase 4 moves this to the server for every player.
-            if (_player == null || _buildingAreasByGrid.Count == 0)
-                return;
-
             List<BuildingArea> areas = new List<BuildingArea>();
-            Vector2Int playerGrid = GetGlobalAreaGrid(_player.transform.position);
 
-            // Collect surrounding 3x3 areas
-            for (int x = playerGrid.x - 1; x <= playerGrid.x + 1; x++)
+            if (_buildingAreasByGrid.Count > 0)
             {
-                for (int y = playerGrid.y - 1; y <= playerGrid.y + 1; y++)
+                // Collect the 3x3 areas around every player: on the server all connected
+                // players, offline the local player
+                foreach (Vector3 playerPosition in GetPlayerPositions())
                 {
-                    if (_buildingAreasByGrid.TryGetValue(new Vector2Int(x, y), out var area))
-                        areas.Add(area);
+                    Vector2Int playerGrid = GetGlobalAreaGrid(playerPosition);
+
+                    for (int x = playerGrid.x - 1; x <= playerGrid.x + 1; x++)
+                    {
+                        for (int y = playerGrid.y - 1; y <= playerGrid.y + 1; y++)
+                        {
+                            if (_buildingAreasByGrid.TryGetValue(new Vector2Int(x, y), out var area) &&
+                                !areas.Contains(area))
+                            {
+                                areas.Add(area);
+                            }
+                        }
+                    }
                 }
             }
 
-            if (areas.Count > 0)
-                RecalculationWorker.Instance.SetWorkerInstructions(areas);
+            // Always replace the instructions, so areas nobody is near stop being recalculated
+            RecalculationWorker.Instance.SetWorkerInstructions(areas);
+        }
+
+        /// <summary>
+        /// Positions of the players whose surroundings get structural recalculation.
+        /// </summary>
+        private List<Vector3> GetPlayerPositions()
+        {
+            List<Vector3> positions = new List<Vector3>();
+
+            if (IsNetworkServer)
+            {
+                foreach (NetworkConnection conn in InstanceFinder.ServerManager.Clients.Values)
+                {
+                    if (conn.FirstObject != null)
+                        positions.Add(conn.FirstObject.transform.position);
+                }
+            }
+            else if (_player != null)
+            {
+                positions.Add(_player.transform.position);
+            }
+
+            return positions;
         }
 
         /// <summary>
@@ -310,7 +340,9 @@ namespace Goodgulf.Building
         /// </summary>
         private void Update()
         {
-            if (!_initialized)
+            // Structural integrity runs on the server, which may have no local player
+            // (and so is never initialized through OnTerrainReady); clients never run it
+            if (IsNetworkClientOnly || (!_initialized && !IsNetworkServer))
                 return;
             
             _workerTimer += Time.deltaTime;
@@ -1021,6 +1053,19 @@ namespace Goodgulf.Building
 
             if (TerrainGraphIntegration.Instance != null)
                 TerrainGraphIntegration.Instance.InvalidateObstacleCache(item.Position, ObstacleInvalidationRadius);
+        }
+
+        /// <summary>
+        /// Server: the given pieces of an area are about to collapse. Sent to the clients
+        /// before the records are removed, so they can play the falling effect.
+        /// </summary>
+        public void NotifyCollapse(string areaId, int[] pieceIds)
+        {
+            if (IsNetworkServer && areaId != null &&
+                _networkAreasById.TryGetValue(areaId, out NetworkBuildingArea networkArea))
+            {
+                networkArea.ObserversCollapse(pieceIds);
+            }
         }
 
         // ==================================================================

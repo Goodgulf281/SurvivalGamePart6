@@ -155,6 +155,50 @@ namespace Goodgulf.Building
             _pieces.Remove(pieceId);
         }
 
+        /// <summary>
+        /// Server → clients: these pieces collapse. Sent before their records are removed
+        /// (an RPC arrives before the SyncType change, fishnet.md §13), so each client
+        /// hands its copy to the falling effect and the later Remove finds nothing to destroy.
+        /// The host is excluded: the server already runs the effect on the real pieces.
+        /// </summary>
+        [ObserversRpc(ExcludeServer = true)]
+        public void ObserversCollapse(int[] pieceIds)
+        {
+            if (pieceIds == null)
+                return;
+
+            foreach (int id in pieceIds)
+            {
+                if (!_localPieces.TryGetValue(id, out GameObject piece))
+                    continue;
+
+                // No longer ours to destroy: the effect destroys it after a delay
+                _localPieces.Remove(id);
+
+                if (piece == null)
+                    continue;
+
+                Vector3 position = piece.transform.position;
+
+                if (piece.TryGetComponent(out ConstructedItemBehaviour cib))
+                {
+                    // Same effect as the server: blue flash, unfreeze, push, destroy after 10 s
+                    cib.SetMeshColor(new Color(0, 0, 1.0f));
+                    cib.RemoveConstructedItem(true);
+                }
+                else
+                {
+                    Destroy(piece);
+                }
+
+                if (TerrainGraphIntegration.Instance != null)
+                    TerrainGraphIntegration.Instance.InvalidateObstacleCache(position, Builder.ObstacleInvalidationRadius);
+            }
+
+            if (_debugEnabled)
+                this.LogInfo($"Collapse of {pieceIds.Length} piece(s) in area {AreaId}");
+        }
+
         // ==================================================================
         // Client: mirroring the records
         // ==================================================================

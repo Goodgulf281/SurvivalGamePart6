@@ -150,7 +150,7 @@ How the pieces fit together (each block is explained in [docs/NetworkBuilding.md
 
   ![Networked build request flow](docs/phase3-build-request.svg)
 
-- **Removing pieces:** a destroy request and a structural collapse both end in `Builder.OnConstructedItemRemoved`, which removes the record so clients destroy their copy.
+- **Removing pieces:** a destroy request and a structural collapse both end in `Builder.OnConstructedItemRemoved`, which removes the record so clients destroy their copy. A collapse first sends `ObserversCollapse` so clients play the falling effect (Phase 4).
 
   ![Networked piece removal flow](docs/phase3-piece-removal.svg)
 
@@ -172,10 +172,10 @@ How the pieces fit together (each block is explained in [docs/NetworkBuilding.md
 - [x] Destruction: `DestructConstructedItemsAtPos` collects the piece IDs under the preview locally, then calls `ServerRequestDestruct(ids)`; the server keeps the existing pieces within reach and removes them. Every removal (destroy or collapse) goes through `Builder.OnConstructedItemRemoved`, which removes the record and invalidates the obstacle cache.
 - [x] Inventory: `PlayerBuilderInventoryBridge` is a `NetworkBehaviour` with a `SyncDictionary<int,int>` (`WritePermission.ServerOnly`, `ReadPermission.OwnerOnly`). The server fills it in `OnStartServer`; consumption only happens on the server during build validation.
 - [x] Save, load and the debug build grid only run on the server in a network session (persistence proper is Phase 6).
-- [ ] Editor setup:
+- [x] Editor setup:
   - Create a `NetworkBuildingArea` prefab: an empty GameObject with a `NetworkObject` (Is Global off) and the `NetworkBuildingArea` component. Assign it to **Builder → Network Building Area Prefab**.
   - The player prefab already has `PlayerBuilderInventoryBridge`; it is now a NetworkBehaviour, so just re-save the prefab if Unity asks.
-- [ ] Test:
+- [x] Test:
   - Host and client both build; each sees the other's pieces, including snapped pieces.
   - Destroy a piece from either side; it disappears on both.
   - A client that joins after building sees all pieces and area outlines.
@@ -186,13 +186,22 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
 
 ## Phase 4: Structural integrity
 
-- [ ] Run `RecalculationWorker`, `Builder.UpdateWorkerAreas` and neighbour detection only on the server. Disable them on pure clients.
-- [ ] Removing weak pieces (`BuildingArea.RemoveWeakConstructedItems`) on the server:
-  - Remove the records from `Pieces`.
-  - Call `ObserversCollapse(int[] pieceIds)` on the area.
-  - Clients run the existing "unfreeze rigidbody, destroy after 10 s" effect on their local copies.
-  - The dictionary removal must not destroy a piece that is collapsing. Mark collapsing IDs first (the RPC arrives before the SyncType change, §13).
+- [x] Run `RecalculationWorker`, `Builder.UpdateWorkerAreas` and neighbour detection only on the server.
+  - `RecalculationWorker.Update` and `Builder.Update` return on pure clients (`Builder.IsNetworkClientOnly`). Neighbour detection already only runs in the server's `InstantiateBuildingPrefab`; clients build copies without it.
+  - `Builder.Update` also runs on a server without a local player (a dedicated server is never initialized through `OnTerrainReady`).
+  - `UpdateWorkerAreas` collects the 3x3 areas around every connected player (`ServerManager.Clients` → `FirstObject`), not just the host's, and always replaces the worker's instructions so areas nobody is near stop being recalculated.
+  - The worker now runs on a snapshot of its area list; `SetWorkerInstructions` replaced the list every 5 s while the worker thread could be reading it.
+- [x] Removing weak pieces (`BuildingArea.RemoveWeakConstructedItems`) on the server:
+  - Collect the collapsing IDs first and call `NetworkBuildingArea.ObserversCollapse(int[] pieceIds)` (via `Builder.NotifyCollapse`, `ExcludeServer` so the host doesn't run it twice).
+  - Then remove the pieces as before; `Builder.OnConstructedItemRemoved` removes the records from `Pieces`.
+  - Clients run the existing effect on their copies (blue flash, unfreeze rigidbody, push, destroy after 10 s) and stop tracking them, so the later record removal finds nothing to destroy. The RPC arrives before the SyncType change (§13); if it ever didn't, the copy would just disappear.
+  - A player's destroy still removes pieces immediately, without the effect, as before.
 - [ ] Optional debug: sync `Distance` into `PieceRecord` for the `ShowDistances` overlay.
+- [ ] Test (no editor setup needed):
+  - Build an overhang beyond `RecalculationWorker` → **Max Strength** on the host and on the client: on both screens the unsupported pieces turn blue, fall and disappear after about 10 s.
+  - Do the same far away from the host's player (beyond one building area, 100 m): the client's overhang still collapses, because the server now recalculates around every player.
+  - Destroy a supporting piece so the rest collapses; the collapse shows on both.
+  - No recalculation log lines on a pure client.
 
 ## Phase 5: Pathfinding and NPCs
 
