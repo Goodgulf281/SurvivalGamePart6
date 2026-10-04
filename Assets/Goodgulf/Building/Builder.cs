@@ -10,6 +10,7 @@ using UnityEngine.Serialization;
 using Goodgulf.TerrainUtils;
 using Unity.VisualScripting;
 using UnityEngine.UI;
+using Goodgulf.Networking;
 
 namespace Goodgulf.Building
 {
@@ -872,26 +873,47 @@ namespace Goodgulf.Building
             return result;
         }
 
+        // Terrain edit sizes (radius in metres, depth in metres; negative depth raises)
+        private const float DepressRadius = 3.0f;
+        private const float DepressDepth  = 1f;
+        private const float RaiseRadius   = 10.0f;
+        private const float RaiseDepth    = -2f;
+
         /// <summary>
         /// Pushes terrain downward at the given position.
+        /// In a network session this is a request to the server (see WorldState).
         /// </summary>
         public void DepressTerrainAtPosition(Vector3 position)
         {
             if (_debugEnabled)
                 Debug.Log($"DepressTerrainAtPosition {position}");
 
-            TerrainUtils.TerrainUtils.PushDownTerrain(_activeTerrain, position, 3.0f, 1f);
+            EditTerrain(position, DepressRadius, DepressDepth);
         }
 
         /// <summary>
         /// Raises terrain at the given position.
+        /// In a network session this is a request to the server (see WorldState).
         /// </summary>
         public void RaiseTerrainAtPosition(Vector3 position)
         {
             if (_debugEnabled)
                 Debug.Log($"RaiseTerrainAtPosition {position}");
 
-            TerrainUtils.TerrainUtils.PushDownTerrain(_activeTerrain, position, 10.0f, -2f);
+            EditTerrain(position, RaiseRadius, RaiseDepth);
+        }
+
+        private void EditTerrain(Vector3 position, float radius, float depth)
+        {
+            // Networked: the server validates the edit and every machine applies it
+            if (WorldState.Instance != null)
+            {
+                WorldState.Instance.RequestTerrainEdit(position, radius, depth);
+                return;
+            }
+
+            // Offline: edit the active terrain directly
+            TerrainUtils.TerrainUtils.PushDownTerrain(_activeTerrain, position, radius, depth);
         }
 
         /// <summary>
