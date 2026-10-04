@@ -205,13 +205,21 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
 
 ## Phase 5: Pathfinding and NPCs
 
-- [ ] Initialize `TerrainGraphIntegration` only on the server (`OnStartServer` path of `GameManager`). Disable the component on pure clients.
-- [ ] Obstacle and height invalidation on the server after every build, destroy, collapse and terrain edit. Phases 2–4 cover these.
-- [ ] `PathfindingAgent`:
-  - Becomes a spawnable NetworkObject prefab with a server-authoritative `NetworkTransform`. Path requests and movement run only on the server.
-  - `PlayerTransform` becomes "nearest player" on the server, for LOS approach and flee.
-  - Patrol points and leader references are set at spawn, or become NetworkObject references.
-- [ ] Add a GridCondition or DistanceCondition to agents so clients only receive nearby NPCs.
+- [x] Initialize `TerrainGraphIntegration` only on the server: `GameManager.InitializePathfinding`, called from `InitializeGameLogic` when the world is ready (no local player needed, so a dedicated server builds the graph too). Pure clients disable the component instead.
+  - `InvalidateHeightmapCache` and `RequestDirtyRegionRebuild` now do nothing before the graph exists (like `InvalidateObstacleCache` already did), so calls on clients are harmless. `NetworkBuildingArea` no longer invalidates on clients at all.
+- [x] Obstacle and height invalidation on the server after every build, destroy, collapse and terrain edit: covered by Phases 2–4 (`Builder.InstantiateBuildingPrefab`, `Builder.OnConstructedItemRemoved`, `WorldState.ApplyNewEdit`).
+- [x] `PathfindingAgent` is a `NetworkBehaviour`, server authoritative:
+  - `Update` (behaviour, path requests, movement) only runs on the server; clients see the agent through a server-authoritative `NetworkTransform`.
+  - New **Target Nearest Player** (on by default): on the server `PlayerTransform` becomes the nearest connected player (`ServerManager.Clients` → `FirstObject`, re-checked every 0.5 s) for LOS approach and flee.
+  - The agents stay scene objects rather than a spawnable prefab: as scene NetworkObjects the server spawns them automatically, and their patrol points and leader stay plain scene references, which work because only the server reads them.
+- [ ] Optional, editor: a GridCondition or DistanceCondition on the agents so clients only receive nearby NPCs.
+- [ ] Known limitation: the graph covers the chunks around one player (`TerrainStreamingController.Player()`, the host's player or, on a dedicated server, the first player). Agents near another, distant player have no graph there. Fix later by building the graph around every streaming target.
+- [ ] Editor setup: on each scene agent, add a `NetworkObject` and a `NetworkTransform` with **Client Authoritative** off. Leave `PlayerTransform` empty (Target Nearest Player fills it).
+- [ ] Test:
+  - Host and client both see the agents patrol and move smoothly.
+  - Approach/flee reacts to whichever player is nearest, including the client's player.
+  - Build a wall across an agent's route: it paths around it (on the server).
+  - On a pure client the log shows "TerrainGraphIntegration disabled".
 
 ## Phase 6: Persistence and hardening
 

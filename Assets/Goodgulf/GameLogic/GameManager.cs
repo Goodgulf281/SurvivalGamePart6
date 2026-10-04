@@ -11,7 +11,8 @@
 //
 //              Once both are ready, the player is held until the chunk
 //              under it has loaded, snapped to the terrain, and then
-//              released; the camera, Builder and pathfinding follow.
+//              released; the camera and Builder follow. Pathfinding is
+//              initialized on the server as soon as the world is ready.
 // Author:      Goodgulf
 // ============================================================
 
@@ -140,6 +141,31 @@ namespace Goodgulf.GameLogic
             _worldReady = true;
 
             Builder.Instance.CacheTerrains();
+
+            InitializePathfinding();
+        }
+
+        /// <summary>
+        /// Pathfinding (and the NPCs using it) is server authoritative: the graph is built on
+        /// the server, or offline, as soon as the world is ready. That also covers a dedicated
+        /// server, which never has a local player. Pure clients disable the component.
+        /// </summary>
+        private void InitializePathfinding()
+        {
+            TerrainGraphIntegration graph = TerrainGraphIntegration.Instance;
+            if (graph == null || graph.IsInitialized)
+                return;
+
+            if (Builder.IsNetworkClientOnly)
+            {
+                this.LogInfo("Pure client: TerrainGraphIntegration disabled (pathfinding runs on the server)");
+                graph.enabled = false;
+                return;
+            }
+
+            this.LogInfo("Initializing TerrainGraphIntegration");
+            graph.InitializeListeners();
+            graph.Initialize();
         }
 
         /// <summary>
@@ -236,10 +262,6 @@ namespace Goodgulf.GameLogic
 
                 this.LogInfo("Invoke OnTerrainReady");
                 OnTerrainReady?.Invoke();
-
-                this.LogInfo("Initializing TerrainGraphIntegration");
-                TerrainGraphIntegration.Instance.InitializeListeners();
-                TerrainGraphIntegration.Instance.Initialize();
             }
 
             _setupRoutine = null;
