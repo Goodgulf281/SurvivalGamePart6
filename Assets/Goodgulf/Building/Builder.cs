@@ -53,7 +53,7 @@ namespace Goodgulf.Building
 
         // World and terrain references
         [Header("World")]
-        [SerializeField]
+        [SerializeField, Tooltip("Legacy, only drawn as a gizmo. Terrain chunks and building areas are positioned from (0,0,0) by TerrainStreamingController.")]
         private Vector3 _worldOrigin;
         [SerializeField]
         private Terrain _activeTerrain;
@@ -104,6 +104,9 @@ namespace Goodgulf.Building
 
         // All terrains indexed by grid coordinate
         private Dictionary<Vector2Int, Terrain> _allTerrains;
+
+        // Source of the terrain chunk coordinates
+        private TerrainStreamingController _streamingController;
 
         /// <summary>
         /// Currently active terrain; also caches its collider
@@ -211,9 +214,11 @@ namespace Goodgulf.Building
         /// </summary>
         private Vector2Int GetGlobalAreaGrid(Vector3 worldPos)
         {
+            // Relative to the world origin, like the terrain chunks, so area cells line up
+            // with each chunk's own building-area grid
             return new Vector2Int(
-                Mathf.FloorToInt((worldPos.x - _worldOrigin.x) / BuildingAreaSize),
-                Mathf.FloorToInt((worldPos.z - _worldOrigin.z) / BuildingAreaSize));
+                Mathf.FloorToInt(worldPos.x / BuildingAreaSize),
+                Mathf.FloorToInt(worldPos.z / BuildingAreaSize));
         }
         
 
@@ -390,12 +395,20 @@ namespace Goodgulf.Building
         /// </summary>
         private Vector2Int GetTerrainIndex(Vector3 worldPos)
         {
-            float terrainSize = TerrainSize; // was hardcoded 1000f;
+            // Terrain chunks are streamed at chunkCoord * chunkSize from the world origin
+            // (TerrainStreamingController), so its chunk coordinates are the terrain index.
+            // _worldOrigin must not be used here: it is a leftover from the fixed terrain
+            // grid (-1500 in the scene), which isn't a multiple of the chunk size and mapped
+            // half of every chunk to the neighbouring terrain.
+            if (_streamingController == null)
+                _streamingController = FindFirstObjectByType<TerrainStreamingController>();
 
-            int x = Mathf.FloorToInt((worldPos.x - _worldOrigin.x) / terrainSize);
-            int z = Mathf.FloorToInt((worldPos.z - _worldOrigin.z) / terrainSize);
+            if (_streamingController != null)
+                return _streamingController.ChunkAt(worldPos);
 
-            return new Vector2Int(x, z);
+            return new Vector2Int(
+                Mathf.FloorToInt(worldPos.x / TerrainSize),
+                Mathf.FloorToInt(worldPos.z / TerrainSize));
         }
 
         /// <summary>
