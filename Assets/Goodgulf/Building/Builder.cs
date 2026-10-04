@@ -11,6 +11,9 @@ using Goodgulf.TerrainUtils;
 using Unity.VisualScripting;
 using UnityEngine.UI;
 using Goodgulf.Networking;
+using Goodgulf.Pathfinding;
+using FishNet;
+using FishNet.Object;
 
 namespace Goodgulf.Building
 {
@@ -73,6 +76,31 @@ namespace Goodgulf.Building
         [FormerlySerializedAs("_magenticLayer")] [SerializeField] 
         private LayerMask _magneticLayer;
 
+        // Networking (Phase 3): the server owns building, clients mirror it
+        [Header("Networking")]
+        [Tooltip("Prefab with a NetworkObject and NetworkBuildingArea, spawned by the server for each building area.")]
+        [SerializeField]
+        private NetworkObject _networkBuildingAreaPrefab;
+        [Tooltip("Furthest a piece may be built or destroyed from the requesting player, in metres (server check).")]
+        [SerializeField]
+        private float _maxBuildReach = 30f;
+        [Tooltip("Minimum seconds between build or destroy requests from one player (server check).")]
+        [SerializeField]
+        private float _minBuildInterval = 0.1f;
+
+        /// <summary>Radius of the pathfinding obstacle invalidation around a built or removed piece.</summary>
+        public const float ObstacleInvalidationRadius = 4f;
+
+        public float MaxBuildReach => _maxBuildReach;
+        public float MinBuildInterval => _minBuildInterval;
+
+        // Building areas by global building-area grid coordinate. Kept here rather than on
+        // the terrain chunk's BuildableTerrain, which is destroyed when the chunk unloads.
+        private Dictionary<Vector2Int, BuildingArea> _buildingAreasByGrid;
+
+        // Server: the networked object of each building area, by area ID
+        private Dictionary<string, NetworkBuildingArea> _networkAreasById;
+
         // All terrains indexed by grid coordinate
         private Dictionary<Vector2Int, Terrain> _allTerrains;
 
@@ -127,6 +155,8 @@ namespace Goodgulf.Building
             _buildingAreasById = new Dictionary<string, BuildingArea>();
             _allConstructedItems = new Dictionary<int, ConstructedItem>();
             _allTerrains = new Dictionary<Vector2Int, Terrain>();
+            _buildingAreasByGrid = new Dictionary<Vector2Int, BuildingArea>();
+            _networkAreasById = new Dictionary<string, NetworkBuildingArea>();
 
         }
 
@@ -143,8 +173,46 @@ namespace Goodgulf.Building
                 if (_debugEnabled)
                     Debug.Log($"Found terrain: {terrain.name} at {terrain.transform.position} -> index {terPos}");
 
-                _allTerrains.Add(terPos, terrain);
+                _allTerrains[terPos] = terrain;
             }
+        }
+
+        // ==================================================================
+        // Network session helpers
+        // ==================================================================
+
+        /// <summary>True while a FishNet server or client is running.</summary>
+        public static bool IsNetworkSession => InstanceFinder.IsServerStarted || InstanceFinder.IsClientStarted;
+
+        /// <summary>True when this process runs the server (dedicated or host).</summary>
+        public static bool IsNetworkServer => InstanceFinder.IsServerStarted;
+
+        /// <summary>True for a client that is not also the server.</summary>
+        public static bool IsNetworkClientOnly => InstanceFinder.IsClientStarted && !InstanceFinder.IsServerStarted;
+
+        /// <summary>
+        /// The terrain chunk at <paramref name="worldPos"/>. Terrain streams in and out, so the
+        /// cache is refreshed once when the chunk isn't in it.
+        /// </summary>
+        public bool TryGetTerrainAt(Vector3 worldPos, out Terrain terrain)
+        {
+            Vector2Int index = GetTerrainIndex(worldPos);
+
+            if (_allTerrains.TryGetValue(index, out terrain) && terrain != null)
+                return true;
+
+            CacheTerrains();
+            return _allTerrains.TryGetValue(index, out terrain) && terrain != null;
+        }
+
+        /// <summary>
+        /// Global building-area grid coordinate (across all terrain chunks).
+        /// </summary>
+        private Vector2Int GetGlobalAreaGrid(Vector3 worldPos)
+        {
+            return new Vector2Int(
+                Mathf.FloorToInt((worldPos.x - _worldOrigin.x) / BuildingAreaSize),
+                Mathf.FloorToInt((worldPos.z - _worldOrigin.z) / BuildingAreaSize));
         }
         
 
@@ -215,37 +283,21 @@ namespace Goodgulf.Building
         /// </summary>
         private void UpdateWorkerAreas()
         {
-            if (!_activeTerrain)
-            {
-                Debug.LogWarning("Builder.UpdateWorkerAreas(): No active terrain found");
+            // No local player (e.g. a dedicated server) or no areas yet: nothing to recalculate.
+            // Phase 4 moves this to the server for every player.
+            if (_player == null || _buildingAreasByGrid.Count == 0)
                 return;
-            }
 
-            if (!_activeTerrain.TryGetComponent<BuildableTerrain>(out BuildableTerrain buildableTerrain))
-            {
-                throw new Exception($"Builder.UpdateWorkerAreas(): active terrain {_activeTerrain.name} has no BuildableTerrain component");
-            }
-
-            Dictionary<Vector2Int, BuildingArea> buildingAreas = buildableTerrain.BuildingAreas;
             List<BuildingArea> areas = new List<BuildingArea>();
-
-            Vector2Int playerPos = WorldToGrid(
-                _player.transform.position,
-                _activeTerrain.transform.position,
-                BuildingAreaSize
-            );
+            Vector2Int playerGrid = GetGlobalAreaGrid(_player.transform.position);
 
             // Collect surrounding 3x3 areas
-            for (int x = playerPos.x - 1; x <= playerPos.x + 1; x++)
+            for (int x = playerGrid.x - 1; x <= playerGrid.x + 1; x++)
             {
-                for (int y = playerPos.y - 1; y <= playerPos.y + 1; y++)
+                for (int y = playerGrid.y - 1; y <= playerGrid.y + 1; y++)
                 {
-                    if (x >= 0 && x < GridSize && y >= 0 && y < GridSize)
-                    {
-                        Vector2Int gp = new Vector2Int(x, y);
-                        if (buildingAreas.TryGetValue(gp, out var area))
-                            areas.Add(area);
-                    }
+                    if (_buildingAreasByGrid.TryGetValue(new Vector2Int(x, y), out var area))
+                        areas.Add(area);
                 }
             }
 
@@ -279,15 +331,10 @@ namespace Goodgulf.Building
             if (_player == null)
                 throw new Exception("Builder.SetPlayer(): Player is null");
             
-            Vector2Int worldIndex = GetTerrainIndex(player.transform.position);
-            
-            if(!_allTerrains.TryGetValue(worldIndex, out var terrain))
-                throw new KeyNotFoundException($"Builder.SetPlayer(): No terrain found for {worldIndex}");
-                
-            if (terrain == null)
-                Debug.LogError("Builder.SetPlayer(): Terrain not found.");
-            else
-                ActiveTerrain = terrain;
+            if (!TryGetTerrainAt(player.transform.position, out var terrain))
+                throw new KeyNotFoundException($"Builder.SetPlayer(): No terrain found for {GetTerrainIndex(player.transform.position)}");
+
+            ActiveTerrain = terrain;
 
             if (_player.TryGetComponent<PlayerBuilderInventoryBridge>(out PlayerBuilderInventoryBridge bridge))
             {
@@ -350,74 +397,28 @@ namespace Goodgulf.Building
         public BuildingArea GetOrCreateBuildingArea(Vector3 worldPosition)
         {
             // Determine which terrain this world position belongs to
-
-            Vector2Int terrainIndex;
-            
-            terrainIndex = GetTerrainIndex(worldPosition);
-
-            if (!_allTerrains.TryGetValue(terrainIndex, out var terrain))
+            if (!TryGetTerrainAt(worldPosition, out var terrain))
             {
-                throw new KeyNotFoundException($"Builder.GetOrCreateBuildingArea(): Terrain not found for {terrainIndex}");
+                throw new KeyNotFoundException($"Builder.GetOrCreateBuildingArea(): Terrain not found for {GetTerrainIndex(worldPosition)}");
             }
             else if (_debugEnabled)
-                Debug.Log($"Builder.GetOrCreateBuildingArea():We have a terrain {terrain.name} (terrainIndex {terrainIndex}) at world position {worldPosition}");
-            
-            Dictionary<Vector2Int, BuildingArea> bas;
-
-            // Fetch the BuildableTerrain component which holds building areas
-            if (terrain.TryGetComponent<BuildableTerrain>(out BuildableTerrain buildableTerrain))
-            {
-                if (_debugEnabled)
-                    Debug.Log($"Builder.GetOrCreateBuildingArea({terrain.name}): buildableTerrain get Dictionaries");
-
-                bas = buildableTerrain.BuildingAreas;
-            }
-            else
-            {
-                throw new Exception($"Builder.GetOrCreateBuildingArea(): BuildableTerrain not found for {terrain.name}");    
-            }
-
-            // Convert world position to grid coordinates relative to this terrain
-            Vector2Int gridPos = WorldToGrid(worldPosition, terrain.transform.position, BuildingAreaSize);
-
-            if (_debugEnabled)
-            {
-                Debug.Log($"Builder.GetOrCreateBuildingArea(): on terrain {terrain.name}[{terrainIndex}], world position {worldPosition}, and grid position {gridPos}");
-
-                if (bas.Count == 0)
-                {
-                    Debug.Log($"Builder.GetOrCreateBuildingArea(): No keys available for {terrain.name}");
-                }
-                else
-                {
-                    foreach (var key in bas.Keys)
-                    {
-                        Debug.Log($"Builder.GetOrCreateBuildingArea(): Available key {key}");
-                    }
-                }
-            }
-
-            // Ensure grid position is within valid bounds
-            /*
-            if (gridPos.x < 0 || gridPos.y < 0 ||
-                gridPos.x >= GridSize || gridPos.y >= GridSize)
-            {
-                Debug.LogError($"Builder.GetOrCreateBuildingArea(): {gridPos} is out of bounds.");
-                return null;
-            }
-            */
+                Debug.Log($"Builder.GetOrCreateBuildingArea(): We have a terrain {terrain.name} at world position {worldPosition}");
 
             // Return existing building area if one already exists at this grid position
-            if (bas.TryGetValue(gridPos, out var area))
+            Vector2Int globalGrid = GetGlobalAreaGrid(worldPosition);
+            if (_buildingAreasByGrid.TryGetValue(globalGrid, out var area))
             {
                 if (_debugEnabled)
-                    Debug.Log($"Builder.GetOrCreateBuildingArea(): <color=green>gridPos is OK and area found</color>");
+                    Debug.Log($"Builder.GetOrCreateBuildingArea(): <color=green>area found at {globalGrid}</color>");
 
                 return area;
             }
 
+            // Grid coordinates relative to this terrain
+            Vector2Int gridPos = WorldToGrid(worldPosition, terrain.transform.position, BuildingAreaSize);
+
             if (_debugEnabled)
-                Debug.Log($"Builder.GetOrCreateBuildingArea(): <color=yellow>gridPos is OK and no area found</color>");
+                Debug.Log($"Builder.GetOrCreateBuildingArea(): <color=yellow>no area at {globalGrid} (grid {gridPos} on {terrain.name})</color>");
 
             // Convert grid position back to world position for spawning
             Vector3 spawnPos = GridToWorld(gridPos, terrain.transform.position, BuildingAreaSize);
@@ -425,14 +426,6 @@ namespace Goodgulf.Building
             if (_debugEnabled)
                 Debug.Log($"Builder.GetOrCreateBuildingArea(): spawnPos={spawnPos}");
 
-            // Instantiate the BuildingArea visual prefab
-            GameObject go = Instantiate(
-                _buildingAreaPrefab,
-                spawnPos,
-                Quaternion.identity,
-                this.transform
-            );
-            
             // Create and initialize the logical BuildingArea data
             area = new BuildingArea();
             area.Position = spawnPos;
@@ -440,24 +433,89 @@ namespace Goodgulf.Building
             area.Initialize(gridPos, BuildingAreaSize);
             area.Id = System.Guid.NewGuid().ToString();
 
-            // Assign terrain reference to the outline component
-            if (go.TryGetComponent<BuildingAreaOutline>(out BuildingAreaOutline outline))
+            if (IsNetworkServer)
             {
-                outline.Terrain = terrain;
-                outline.BuildingArea = area;
-                outline.SetValid(true);
+                // Networked: spawn the area's NetworkObject; every client draws the outline itself
+                SpawnNetworkBuildingArea(area, spawnPos);
             }
-            else throw new Exception($"Builder.GetOrCreateBuildingArea(): no outline found for the building area prefab");
+            else
+            {
+                // Offline: instantiate the BuildingArea visual prefab directly
+                GameObject go = Instantiate(
+                    _buildingAreaPrefab,
+                    spawnPos,
+                    Quaternion.identity,
+                    this.transform
+                );
 
-            
+                // Assign terrain reference to the outline component
+                if (go.TryGetComponent<BuildingAreaOutline>(out BuildingAreaOutline outline))
+                {
+                    outline.Terrain = terrain;
+                    outline.BuildingArea = area;
+                    outline.SetValid(true);
+                }
+                else throw new Exception($"Builder.GetOrCreateBuildingArea(): no outline found for the building area prefab");
+            }
+
             if (_debugEnabled)
                 Debug.Log($"Builder.GetOrCreateBuildingArea(): created area with id ={area.Id}");
 
             // Register area for lookup by grid position and by ID
-            bas.Add(gridPos, area);
+            _buildingAreasByGrid.Add(globalGrid, area);
             _buildingAreasById.Add(area.Id, area);
 
             return area;
+        }
+
+        /// <summary>
+        /// Server: spawn the networked object for a new building area.
+        /// </summary>
+        private void SpawnNetworkBuildingArea(BuildingArea area, Vector3 spawnPos)
+        {
+            if (_networkBuildingAreaPrefab == null)
+            {
+                Debug.LogError("Builder: Network Building Area Prefab is not assigned; clients will not see this area");
+                return;
+            }
+
+            NetworkObject nob = Instantiate(_networkBuildingAreaPrefab, spawnPos, Quaternion.identity);
+            if (!nob.TryGetComponent(out NetworkBuildingArea networkArea))
+            {
+                Debug.LogError("Builder: Network Building Area Prefab has no NetworkBuildingArea component");
+                Destroy(nob.gameObject);
+                return;
+            }
+
+            networkArea.SetArea(area);
+            InstanceFinder.ServerManager.Spawn(nob);
+            _networkAreasById[area.Id] = networkArea;
+        }
+
+        /// <summary>
+        /// Client: create the outline visual for a networked building area centred on
+        /// <paramref name="center"/>. Returns null if the terrain there isn't loaded.
+        /// </summary>
+        public GameObject CreateAreaOutline(Vector3 center)
+        {
+            if (_buildingAreaPrefab == null || !TryGetTerrainAt(center, out Terrain terrain))
+                return null;
+
+            GameObject go = Instantiate(_buildingAreaPrefab, center, Quaternion.identity, this.transform);
+
+            if (go.TryGetComponent<BuildingAreaOutline>(out BuildingAreaOutline outline))
+            {
+                // The outline only needs the area's position and size
+                BuildingArea outlineArea = new BuildingArea();
+                outlineArea.Position = center;
+                outlineArea.Initialize(WorldToGrid(center, terrain.transform.position, BuildingAreaSize), BuildingAreaSize);
+
+                outline.Terrain = terrain;
+                outline.BuildingArea = outlineArea;
+                outline.SetValid(true);
+            }
+
+            return go;
         }
 
         /// <summary>
@@ -502,6 +560,13 @@ namespace Goodgulf.Building
         /// </summary>
         public void InstantiateBuildingPrefabDebug(int index, Vector3 position, Quaternion rotation)
         {
+            // Networked: only the server builds; a client would create pieces nobody else sees
+            if (IsNetworkClientOnly)
+            {
+                Debug.LogWarning("Builder.InstantiateBuildingPrefabDebug(): only the server can do this in a network session");
+                return;
+            }
+
             BuildTemplate b;
             
             if (index < 0 || index >= _buildItemTemplates.Count)
@@ -535,12 +600,37 @@ namespace Goodgulf.Building
         /// </param>
         public void DestructConstructedItemsAtPos(GameObject instantiatedTransparentPrefab)
         {
+            List<int> ids = CollectPieceIdsAt(instantiatedTransparentPrefab);
+            if (ids.Count == 0)
+                return;
+
+            if (IsNetworkSession)
+            {
+                // The server validates and removes them; clients follow the records
+                if (_playerBuilderInventoryBridge != null)
+                    _playerBuilderInventoryBridge.RequestDestruct(ids.ToArray());
+                else
+                    Debug.LogWarning("Builder.DestructConstructedItemsAtPos(): no local player yet");
+                return;
+            }
+
+            DestructConstructedItems(ids);
+        }
+
+        /// <summary>
+        /// IDs of the pieces overlapping the placement preview's volume.
+        /// Works on clients too: their piece copies carry the server's IDs.
+        /// </summary>
+        private List<int> CollectPieceIdsAt(GameObject instantiatedTransparentPrefab)
+        {
+            List<int> ids = new List<int>();
+
             // Safety check: nothing to process
             if (instantiatedTransparentPrefab == null)
             {
                 if(_debugEnabled)
                     Debug.LogWarning($"DestructConstructedItemsAtPos(): instantiatedTransparentPrefab is null");
-                return;
+                return ids;
             }
 
             // Expecting the prefab to have at least one child containing a collider
@@ -548,7 +638,7 @@ namespace Goodgulf.Building
             {
                 if(_debugEnabled)
                     Debug.LogWarning($"DestructConstructedItemsAtPos(): instantiatedTransparentPrefab childCount is 0");
-                return;
+                return ids;
             }
 
             // Use the first child's collider as the spatial reference
@@ -563,32 +653,45 @@ namespace Goodgulf.Building
                 collider1.bounds.extents.magnitude
             );
 
-            // Iterate over all detected colliders
-            for (int i = 0; i < hits.Length; i++)
+            foreach (Collider collider in hits)
             {
-                Collider collider = hits[i];
-
                 if (collider.gameObject.transform.parent == null)
                     continue;
-                
+
                 // Constructed item behaviours are expected to live on the parent GameObject
-                if (collider.gameObject.transform.parent.TryGetComponent(out ConstructedItemBehaviour cib))
+                if (collider.gameObject.transform.parent.TryGetComponent(out ConstructedItemBehaviour cib) &&
+                    !ids.Contains(cib.id))
                 {
-                    // Retrieve the building area this constructed item belongs to
-                    BuildingArea area = GetBuildingAreaByID(cib.constructedItem.BuildingAreaId);
-                    if (area != null)
-                    {
-                        // Mark the item as infinitely distant so it is guaranteed to be removed
-                        cib.constructedItem.Distance = float.PositiveInfinity;
-
-                        // Remove or weaken the constructed item in its building area
-                        area.RemoveWeakConstructedItem(cib.constructedItem);
-
-                        // Visual feedback: mark the affected item
-                        cib.SetMeshColor(Color.magenta);
-                    }
-                    else throw new Exception($"Builder.DestructConstructedItemsAtPos(): no BuildingArea found for ConstructedItemBehaviour {cib.name}");
+                    ids.Add(cib.id);
                 }
+            }
+
+            return ids;
+        }
+
+        /// <summary>
+        /// Removes the given pieces (offline, or on the server after validation).
+        /// </summary>
+        public void DestructConstructedItems(IEnumerable<int> ids)
+        {
+            foreach (int id in ids)
+            {
+                ConstructedItem item = GetConstructedItem(id);
+                if (item == null)
+                    continue;
+
+                // Retrieve the building area this constructed item belongs to
+                BuildingArea area = GetBuildingAreaByID(item.BuildingAreaId);
+
+                // Mark the item as infinitely distant so it is guaranteed to be removed
+                item.Distance = float.PositiveInfinity;
+
+                // Visual feedback before the item is destroyed
+                if (item.ConstructedItemBehaviour != null)
+                    item.ConstructedItemBehaviour.SetMeshColor(Color.magenta);
+
+                // Remove the constructed item from its building area
+                area.RemoveWeakConstructedItem(item);
             }
         }
 
@@ -652,10 +755,8 @@ namespace Goodgulf.Building
             Vector3 pos = col.bounds.center;
 
             // Determine which terrain tile this position belongs to
-            Vector2Int index = GetTerrainIndex(pos);
-            
-            if(!_allTerrains.TryGetValue(index, out var terrain))
-                throw new KeyNotFoundException($"Builder.IsTouchingAnyTerrain(): No terrain found for {index}");
+            if (!TryGetTerrainAt(pos, out var terrain))
+                throw new KeyNotFoundException($"Builder.IsTouchingAnyTerrain(): No terrain found for {GetTerrainIndex(pos)}");
 
             if (terrain != null)
             {
@@ -692,9 +793,10 @@ namespace Goodgulf.Building
         /// </summary>
         public GameObject InstantiateBuildingPrefab(int index, Vector3 position, Quaternion rotation, int snapPointIndex)
         {
-            // Validate template index and player availability
-            if (index < 0 || index >= _buildItemTemplates.Count || _player == null)
-                throw new Exception($"Builder.InstantiateBuildingPrefab(): invalid parameter {index} or _player is null");
+            // Validate template index. No local player is needed: on the server this also
+            // builds for remote players.
+            if (index < 0 || index >= _buildItemTemplates.Count)
+                throw new Exception($"Builder.InstantiateBuildingPrefab(): invalid parameter {index}");
 
             // Instantiate the building prefab under this Builder transform
             GameObject builtItem = Instantiate(
@@ -750,22 +852,7 @@ namespace Goodgulf.Building
                 constructedItem.SnapPointIndex = snapPointIndex;
 
                 // Apply snap point offsets to all submeshes if applicable
-                if (constructedItem.ConstructedItemBehaviour != null && snapPointIndex > 0)
-                {
-                    List<GameObject> submeshes = constructedItem.ConstructedItemBehaviour.MeshObjects;
-                    BuildTemplate bt = _buildItemTemplates[constructedItem.BuildTemplateId];
-
-                    for (int i = 0; i < snapPointIndex; i++)
-                    {
-                        if (i < bt.snapPoints.Count)
-                        {
-                            for (int j = 0; j < submeshes.Count; j++)
-                            {
-                                submeshes[j].transform.localPosition += bt.snapPoints[i];
-                            }
-                        }
-                    }
-                }
+                ApplySnapPointOffsets(constructedItem.ConstructedItemBehaviour, index, snapPointIndex);
 
                 // Register globally
                 _allConstructedItems.Add(constructedItem.Id, constructedItem);
@@ -775,7 +862,7 @@ namespace Goodgulf.Building
                 // Safety check for terrain mismatch or missing building area
                 Vector2Int tpos = GetTerrainIndex(position);
 
-                if (_allTerrains.TryGetValue(tpos, out var terrain))
+                if (TryGetTerrainAt(position, out var terrain))
                 {
                     if (terrain == _activeTerrain)
                     {
@@ -842,7 +929,161 @@ namespace Goodgulf.Building
             if (_debugEnabled)
                 buildingArea.ShowDistance(constructedItem);
 
+            // Networked: record the piece so every client builds its own copy
+            if (IsNetworkServer && _networkAreasById.TryGetValue(buildingArea.Id, out NetworkBuildingArea networkArea))
+            {
+                networkArea.AddPiece(new PieceRecord
+                {
+                    Id = constructedItem.Id,
+                    TemplateId = index,
+                    Position = position,
+                    Rotation = rotation,
+                    SnapIndex = snapPointIndex
+                });
+            }
+
+            // Pathfinding must see the new obstacle
+            if (TerrainGraphIntegration.Instance != null)
+                TerrainGraphIntegration.Instance.InvalidateObstacleCache(position, ObstacleInvalidationRadius);
+
             return builtItem;
+        }
+
+        /// <summary>
+        /// Shifts a piece's submeshes by the snap point offsets used to place it.
+        /// Shared by the server's pieces and the clients' copies so both line up.
+        /// </summary>
+        private void ApplySnapPointOffsets(ConstructedItemBehaviour cib, int templateIndex, int snapPointIndex)
+        {
+            if (cib == null || snapPointIndex <= 0)
+                return;
+
+            List<GameObject> submeshes = cib.MeshObjects;
+            BuildTemplate bt = _buildItemTemplates[templateIndex];
+
+            for (int i = 0; i < snapPointIndex; i++)
+            {
+                if (i < bt.snapPoints.Count)
+                {
+                    for (int j = 0; j < submeshes.Count; j++)
+                    {
+                        submeshes[j].transform.localPosition += bt.snapPoints[i];
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Client: build a local copy of a piece the server has built. It has no
+        /// ConstructedItem; structural integrity runs on the server.
+        /// </summary>
+        public GameObject InstantiatePieceCopy(PieceRecord record, Transform parent)
+        {
+            BuildTemplate template = GetBuildItemTemplate(record.TemplateId);
+            if (template == null)
+            {
+                Debug.LogError($"Builder.InstantiatePieceCopy(): unknown template {record.TemplateId} for piece {record.Id}");
+                return null;
+            }
+
+            GameObject copy = Instantiate(template.buildPrefab, record.Position, record.Rotation, parent);
+            copy.name = template.name + " (" + record.Id + ")";
+
+            if (copy.transform.childCount > 0)
+                copy.transform.GetChild(0).gameObject.name = copy.name + " (mesh)";
+
+            if (copy.TryGetComponent(out ConstructedItemBehaviour cib))
+            {
+                cib.id = record.Id;
+                cib.DebugEnabled = _debugEnabled;
+                ApplySnapPointOffsets(cib, record.TemplateId, record.SnapIndex);
+            }
+
+            return copy;
+        }
+
+        /// <summary>
+        /// Called by BuildingArea whenever a constructed item is removed (destroyed or collapsed).
+        /// </summary>
+        public void OnConstructedItemRemoved(ConstructedItem item)
+        {
+            if (item == null)
+                return;
+
+            _allConstructedItems.Remove(item.Id);
+
+            // Networked: drop the record so clients destroy their copy
+            if (IsNetworkServer && item.BuildingAreaId != null &&
+                _networkAreasById.TryGetValue(item.BuildingAreaId, out NetworkBuildingArea networkArea))
+            {
+                networkArea.RemovePiece(item.Id);
+            }
+
+            if (TerrainGraphIntegration.Instance != null)
+                TerrainGraphIntegration.Instance.InvalidateObstacleCache(item.Position, ObstacleInvalidationRadius);
+        }
+
+        // ==================================================================
+        // Build and destroy requests
+        // ==================================================================
+
+        /// <summary>
+        /// Build a piece for the local player. In a network session this asks the server
+        /// (which validates it and consumes inventory); offline it builds directly.
+        /// </summary>
+        public void RequestBuild(int templateId, Vector3 position, Quaternion rotation, int snapPointIndex)
+        {
+            if (IsNetworkSession)
+            {
+                if (_playerBuilderInventoryBridge == null)
+                {
+                    Debug.LogWarning("Builder.RequestBuild(): no local player yet");
+                    return;
+                }
+
+                _playerBuilderInventoryBridge.RequestBuild(templateId, position, rotation, snapPointIndex);
+                return;
+            }
+
+            InstantiateBuildingPrefab(templateId, position, rotation, snapPointIndex);
+            _playerBuilderInventoryBridge.ConsumeItemAmount(templateId, 1);
+        }
+
+        /// <summary>
+        /// Server check: is <paramref name="position"/> inside a non-buildable area?
+        /// Position based, because the server has no placement preview to overlap with.
+        /// </summary>
+        public bool IsPositionInNonBuildableArea(Vector3 position)
+        {
+            if (_nonBuildableAreas == null)
+                return false;
+
+            foreach (NonBuildableArea nba in _nonBuildableAreas)
+            {
+                if (nba != null && Vector3.Distance(nba.transform.position, position) <= nba.Range)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Server check: is there already a piece of this template at (almost) the same
+        /// position and rotation? Pieces are meant to touch, so this only rejects duplicates.
+        /// </summary>
+        public bool IsDuplicatePiece(int templateId, Vector3 position, Quaternion rotation)
+        {
+            foreach (ConstructedItem item in _allConstructedItems.Values)
+            {
+                if (item.BuildTemplateId == templateId &&
+                    (item.Position - position).sqrMagnitude < 0.0001f &&
+                    Quaternion.Angle(item.Rotation, rotation) < 1f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -921,6 +1162,13 @@ namespace Goodgulf.Building
         /// </summary>
         public void SaveAllBuildingAreas()
         {
+            // Networked: only the server builds; a client would create pieces nobody else sees
+            if (IsNetworkClientOnly)
+            {
+                Debug.LogWarning("Builder.SaveAllBuildingAreas(): only the server can do this in a network session");
+                return;
+            }
+
             foreach (var area in _buildingAreasById)
             {
                 string json = JsonUtility.ToJson(area.Value, true);
@@ -935,6 +1183,13 @@ namespace Goodgulf.Building
         /// </summary>
         public void LoadBuildingArea()
         {
+            // Networked: only the server builds; a client would create pieces nobody else sees
+            if (IsNetworkClientOnly)
+            {
+                Debug.LogWarning("Builder.LoadBuildingArea(): only the server can do this in a network session");
+                return;
+            }
+
             string[] files = { "1.json", "2.json", "3.json" };
 
             foreach (string filename in files)

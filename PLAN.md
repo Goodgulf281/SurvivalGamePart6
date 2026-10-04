@@ -136,7 +136,7 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - A per-chunk count of applied edits makes each edit apply exactly once per load of a chunk, whether it arrives live or is replayed.
   - Every machine that applies an edit live calls `InvalidateHeightmapCache` and `RequestDirtyRegionRebuild`, since `TerrainGraphIntegration` still runs everywhere (Phase 5 moves it to the server).
   - Edits only live for the session; saving them is Phase 6.
-- [ ] Test: no editor setup needed (the limits are new fields on the `WorldState` component).
+- [x] Test: no editor setup needed (the limits are new fields on the `WorldState` component).
   - Raise and depress terrain on the host and on the client; both see every edit.
   - Edit a chunk, walk until it unloads (beyond the unload radius) and come back: the edit is still there. A client that joins after edits were made sees them too.
   - After edits, the F9 dumps from host and client still match (the heightmap hashes include the edits).
@@ -144,28 +144,35 @@ Expected until later phases: building is local to each player (Phase 3), and the
 
 ## Phase 3: Building (one networked object per BuildingArea)
 
-- [ ] `NetworkBuildingArea` prefab: `NetworkObject` plus a `NetworkBehaviour` wrapping the existing `BuildingArea` data class.
-  - `SyncVar<string> AreaId` and `SyncVar<Vector3> Position`.
-  - `SyncDictionary<int, PieceRecord> Pieces`, where `PieceRecord` is a struct `{ int Id; int TemplateId; Vector3 Pos; Quaternion Rot; int SnapIndex; }`.
-  - Per-area visibility: add a **GridCondition** (or DistanceCondition) to the prefab's `NetworkObserver` in *Add Missing* mode, so clients only receive nearby areas. This needs a HashGrid on the NetworkManager.
-- [ ] Server:
-  - `Builder.GetOrCreateBuildingArea` instantiates and spawns the `NetworkBuildingArea` (server only).
-  - The outline visual (`BuildingAreaOutline`) is created locally on each client in `OnStartClient`.
-- [ ] Build request flow:
+- [x] `NetworkBuildingArea` (`Building/NetworkBuildingArea.cs`): a `NetworkBehaviour` for one `BuildingArea`.
+  - `SyncVar<string> _areaId`; the position is the NetworkObject's own transform, so no extra SyncVar.
+  - `SyncDictionary<int, PieceRecord> _pieces`, where `PieceRecord` is a struct `{ int Id; int TemplateId; Vector3 Position; Quaternion Rotation; int SnapIndex; }`.
+  - [ ] Optional, editor: per-area visibility with a **GridCondition** (or DistanceCondition) on the prefab's `NetworkObserver` in *Add Missing* mode, plus a HashGrid on the NetworkManager. Without it every client receives every area, which is fine at this scale.
+- [x] Server:
+  - `Builder.GetOrCreateBuildingArea` instantiates and spawns the `NetworkBuildingArea` (server only; offline it still creates the outline directly).
+  - The outline visual (`BuildingAreaOutline`) is created locally on each client in `OnStartClient` (`Builder.CreateAreaOutline`).
+  - Areas are now registered on `Builder` by global grid coordinate instead of on the chunk's `BuildableTerrain`, which is destroyed when the chunk unloads. `Builder.TryGetTerrainAt` re-caches terrains when a streamed-in chunk is missing.
+- [x] Build request flow:
   1. The client-side `BuilderInput` keeps the transparent preview, raycast, snapping, rotation and magnetic snap, all local.
-  2. On confirm, the client calls `ServerRequestBuild(templateId, pos, rot, snapIndex)`. This is a ServerRpc on the player's NetworkBehaviour, where the caller's connection identifies the player.
-  3. The server validates:
-     - template index
-     - inventory
-     - `IsInNonBuildableArea`
-     - reach distance from the caller's player
-     - rate limit
-     - an overlap check
-  4. The server runs the existing `InstantiateBuildingPrefab` logic: the physics-based grounded and neighbour detection, and `ConstructedItem` registration with an ID from `GetNewGlobalID`. It then adds a `PieceRecord` to the area's `Pieces`.
-  5. The server calls `TerrainGraphIntegration.InvalidateObstacleCache(pos, radius)`.
-- [ ] Clients: on `Pieces.OnChange`, Add/Set instantiates the plain build prefab (collider on, rigidbody kinematic) under the area, and Remove destroys it. Handle `Complete`, and fill the dictionary on first spawn so late joiners and areas that come into view are built. On the host, skip instantiation when `asServer` is false, because the server already created the object.
-- [ ] Destruction (`DestructConstructedItemsAtPos`) becomes a ServerRpc with the same validation. The server removes the records and invalidates the obstacle cache.
-- [ ] Inventory: move `PlayerBuilderInventoryBridge` onto the player prefab as a `NetworkBehaviour` with a `SyncDictionary<int,int>` (ReadPermission.OwnerOnly), written only by the server. The client UI reads it; consumption happens only on the server during build validation.
+  2. On confirm, `Builder.RequestBuild` calls `PlayerBuilderInventoryBridge.ServerRequestBuild(templateId, pos, rot, snapIndex)`, a ServerRpc on the player prefab, so the caller is the owning player.
+  3. The server validates: template index, snap index, inventory, non-buildable areas (`IsPositionInNonBuildableArea`, position based because the server has no preview), reach (`Builder._maxBuildReach`), rate (`_minBuildInterval`), terrain loaded, and duplicates (`IsDuplicatePiece`: same template at the same position and rotation; pieces are meant to touch, so a full overlap check would reject valid snaps).
+  4. The server runs the existing `InstantiateBuildingPrefab` (grounding, neighbours, `ConstructedItem` with an ID from `GetNewGlobalID`) and adds a `PieceRecord` to the area's `Pieces`. It no longer needs a local player.
+  5. `InstantiateBuildingPrefab` calls `TerrainGraphIntegration.InvalidateObstacleCache(pos, Builder.ObstacleInvalidationRadius)`.
+- [x] Clients: `Pieces.OnChange` Add/Set instantiates a copy of the build prefab under the area (`Builder.InstantiatePieceCopy`, same snap offsets as the server) and Remove destroys it; `OnStartClient` builds all existing records for late joiners and areas coming into view (idempotent with the initial sync callbacks). The host skips this, since the server's pieces are already there. Copies have no `ConstructedItem`; they invalidate the local pathfinding obstacle cache too, because pathfinding still runs everywhere until Phase 5.
+- [x] Destruction: `DestructConstructedItemsAtPos` collects the piece IDs under the preview locally, then calls `ServerRequestDestruct(ids)`; the server keeps the existing pieces within reach and removes them. Every removal (destroy or collapse) goes through `Builder.OnConstructedItemRemoved`, which removes the record and invalidates the obstacle cache.
+- [x] Inventory: `PlayerBuilderInventoryBridge` is a `NetworkBehaviour` with a `SyncDictionary<int,int>` (`WritePermission.ServerOnly`, `ReadPermission.OwnerOnly`). The server fills it in `OnStartServer`; consumption only happens on the server during build validation.
+- [x] Save, load and the debug build grid only run on the server in a network session (persistence proper is Phase 6).
+- [ ] Editor setup:
+  - Create a `NetworkBuildingArea` prefab: an empty GameObject with a `NetworkObject` (Is Global off) and the `NetworkBuildingArea` component. Assign it to **Builder → Network Building Area Prefab**.
+  - The player prefab already has `PlayerBuilderInventoryBridge`; it is now a NetworkBehaviour, so just re-save the prefab if Unity asks.
+- [ ] Test:
+  - Host and client both build; each sees the other's pieces, including snapped pieces.
+  - Destroy a piece from either side; it disappears on both.
+  - A client that joins after building sees all pieces and area outlines.
+  - Inventory runs out on the server (the build is rejected with a log line), and an out-of-reach build is rejected.
+  - Building on a chunk that streamed in after startup works, and walking away and back doesn't duplicate an area.
+
+Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still only runs around the host's own player, and collapses remove pieces on clients without the falling effect.
 
 ## Phase 4: Structural integrity
 

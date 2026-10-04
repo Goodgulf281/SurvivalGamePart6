@@ -598,15 +598,13 @@ namespace Goodgulf.Building
                 // If a magnetic snap has been done, instantiate the building prefab at the current prefab position
                 if (_magneticSnapDone)
                 {
-                    Builder.Instance.InstantiateBuildingPrefab(
+                    // Build (in a network session: ask the server, which also consumes inventory)
+                    Builder.Instance.RequestBuild(
                         _selectedBuildTemplate.id, 
                         instantiatedTransparentPrefab.transform.position,
                         instantiatedTransparentPrefab.transform.rotation, 
                         _snapPointIndex
                     );
-
-                    // Consume one item from the player's inventory
-                    _playerBuilderInventoryBridge.ConsumeItemAmount(_selectedBuildTemplate.id, 1);
 
                     // Reset the magnetic snap status and timer
                     _magneticSnapDone = false;
@@ -639,15 +637,13 @@ namespace Goodgulf.Building
                         else
                         {
                             // Instantiate the building prefab at the calculated position
-                            Builder.Instance.InstantiateBuildingPrefab(
+                            // Build (in a network session: ask the server, which also consumes inventory)
+                            Builder.Instance.RequestBuild(
                                 _selectedBuildTemplate.id, 
                                 pos,
                                 instantiatedTransparentPrefab.transform.rotation, 
                                 _snapPointIndex
                             );
-
-                            // Consume one item from the player's inventory
-                            _playerBuilderInventoryBridge.ConsumeItemAmount(_selectedBuildTemplate.id, 1);
                         }
                         // The selected build item remains active to allow additional placements
                     }
