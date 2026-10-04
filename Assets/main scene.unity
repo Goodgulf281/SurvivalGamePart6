@@ -526,6 +526,9 @@ MonoBehaviour:
   _magneticLayer:
     serializedVersion: 2
     m_Bits: 2048
+  _networkBuildingAreaPrefab: {fileID: 2962436851791842622, guid: d51c37c479899b140adc3610fd8f2208, type: 3}
+  _maxBuildReach: 30
+  _minBuildInterval: 0.1
 --- !u!114 &260592522
 MonoBehaviour:
   m_ObjectHideFlags: 0

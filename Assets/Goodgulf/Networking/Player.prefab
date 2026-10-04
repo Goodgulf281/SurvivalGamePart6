@@ -138,6 +138,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b2726107473f3a044a75aec08790f9bb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  _componentIndexCache: 255
+  _addedNetworkObject: {fileID: 5746065596422262553}
+  _networkObjectCache: {fileID: 0}
   _debugEnabled: 1
 --- !u!114 &4413430906116791714
 MonoBehaviour:
