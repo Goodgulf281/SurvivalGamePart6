@@ -172,10 +172,10 @@ How the pieces fit together (each block is explained in [docs/NetworkBuilding.md
 - [x] Destruction: `DestructConstructedItemsAtPos` collects the piece IDs under the preview locally, then calls `ServerRequestDestruct(ids)`; the server keeps the existing pieces within reach and removes them. Every removal (destroy or collapse) goes through `Builder.OnConstructedItemRemoved`, which removes the record and invalidates the obstacle cache.
 - [x] Inventory: `PlayerBuilderInventoryBridge` is a `NetworkBehaviour` with a `SyncDictionary<int,int>` (`WritePermission.ServerOnly`, `ReadPermission.OwnerOnly`). The server fills it in `OnStartServer`; consumption only happens on the server during build validation.
 - [x] Save, load and the debug build grid only run on the server in a network session (persistence proper is Phase 6).
-- [ ] Editor setup:
+- [x] Editor setup:
   - Create a `NetworkBuildingArea` prefab: an empty GameObject with a `NetworkObject` (Is Global off) and the `NetworkBuildingArea` component. Assign it to **Builder → Network Building Area Prefab**.
   - The player prefab already has `PlayerBuilderInventoryBridge`; it is now a NetworkBehaviour, so just re-save the prefab if Unity asks.
-- [ ] Test:
+- [x] Test:
   - Host and client both build; each sees the other's pieces, including snapped pieces.
   - Destroy a piece from either side; it disappears on both.
   - A client that joins after building sees all pieces and area outlines.
