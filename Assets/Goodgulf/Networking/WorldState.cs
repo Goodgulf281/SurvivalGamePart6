@@ -12,6 +12,15 @@
 //              • Clients read it in OnStartClient (the seed is already
 //                synced in the spawn message) and start streaming.
 //
+//              Terrain edits (raise/depress) are server authoritative:
+//              • Clients ask with RequestTerrainEdit; the server checks
+//                reach, rate and size, then appends to _terrainEdits.
+//              • Every machine applies new edits to chunks it has
+//                loaded, and replays a chunk's edits when it loads
+//                (TerrainStreamingController.ChunkTerrainReady).
+//              • A per-chunk count of applied edits makes sure each
+//                edit is applied exactly once per load of a chunk.
+//
 //              Put this on a prefab with a NetworkObject (Is Global on,
 //              Initialize Order -128) listed in the NetworkManager's
 //              ServerSpawner. TerrainStreamingController must have
@@ -20,16 +29,19 @@
 // ============================================================
 
 using System;
+using System.Collections.Generic;
+using FishNet.Connection;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using Goodgulf.Logging;
+using Goodgulf.Pathfinding;
 using Goodgulf.TerrainUtils;
 using UnityEngine;
 
 namespace Goodgulf.Networking
 {
     /// <summary>
-    /// Global networked world state. Holds the shared world seed.
+    /// Global networked world state. Holds the shared world seed and the terrain edits.
     /// </summary>
     public class WorldState : NetworkBehaviour, IDebuggable
     {
@@ -40,6 +52,19 @@ namespace Goodgulf.Networking
         [Header("Seed")]
         [Tooltip("World seed used by the server unless -seed <n> is passed on the command line.")]
         [SerializeField] private int _defaultSeed = 12345;
+
+        [Header("Terrain Edit Limits (server)")]
+        [Tooltip("Furthest an edit may be from the requesting player, in metres.")]
+        [SerializeField] private float _maxEditReach = 50f;
+
+        [Tooltip("Minimum seconds between edits from one client.")]
+        [SerializeField] private float _minEditInterval = 0.2f;
+
+        [Tooltip("Largest allowed edit radius, in metres.")]
+        [SerializeField] private float _maxEditRadius = 10f;
+
+        [Tooltip("Largest allowed edit depth or height, in metres.")]
+        [SerializeField] private float _maxEditDepth = 2f;
 
         [Header("Debug")]
         [SerializeField] private bool _debugEnabled = true;
@@ -52,6 +77,9 @@ namespace Goodgulf.Networking
 
         private readonly SyncVar<int> _seed = new();
 
+        // Every accepted terrain edit, in the order the server applied them
+        private readonly SyncList<TerrainEdit> _terrainEdits = new();
+
         /// <summary>The current world state, or null before it has spawned.</summary>
         public static WorldState Instance { get; private set; }
 
@@ -59,8 +87,25 @@ namespace Goodgulf.Networking
         public int Seed => _seed.Value;
 
         // ==================================================================
-        // Network lifecycle
+        // Private state
         // ==================================================================
+
+        private TerrainStreamingController _streaming;
+
+        // Per loaded chunk: how many entries of _terrainEdits have been considered for it
+        private readonly Dictionary<Vector2Int, int> _editsAppliedUpTo = new Dictionary<Vector2Int, int>();
+
+        // Server: time of each client's last accepted edit, for rate limiting
+        private readonly Dictionary<int, float> _lastEditTime = new Dictionary<int, float>();
+
+        // ==================================================================
+        // Unity / network lifecycle
+        // ==================================================================
+
+        private void Awake()
+        {
+            _terrainEdits.OnChange += TerrainEdits_OnChange;
+        }
 
         public override void OnStartNetwork()
         {
@@ -72,6 +117,16 @@ namespace Goodgulf.Networking
 
         public override void OnStopNetwork()
         {
+            if (_streaming != null)
+            {
+                _streaming.ChunkTerrainReady -= Streaming_ChunkTerrainReady;
+                _streaming.onChunkUnload.RemoveListener(Streaming_OnChunkUnload);
+                _streaming = null;
+            }
+
+            _editsAppliedUpTo.Clear();
+            _lastEditTime.Clear();
+
             if (Instance == this)
                 Instance = null;
         }
@@ -94,19 +149,169 @@ namespace Goodgulf.Networking
         }
 
         // ==================================================================
+        // Terrain edits — requests
+        // ==================================================================
+
+        /// <summary>
+        /// Ask the server to edit the terrain. Positive <paramref name="depth"/> pushes it down,
+        /// negative raises it. The edit shows up on every machine once the server accepts it.
+        /// </summary>
+        public void RequestTerrainEdit(Vector3 position, float radius, float depth)
+        {
+            ServerRequestTerrainEdit(position, radius, depth);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        private void ServerRequestTerrainEdit(Vector3 position, float radius, float depth, NetworkConnection caller = null)
+        {
+            // Untrusted client input: validate everything
+            if (caller == null || caller.FirstObject == null)
+            {
+                this.LogWarning("Terrain edit rejected: the caller has no player");
+                return;
+            }
+
+            if (radius <= 0f || radius > _maxEditRadius || Mathf.Abs(depth) > _maxEditDepth ||
+                float.IsNaN(position.x) || float.IsNaN(position.y) || float.IsNaN(position.z))
+            {
+                this.LogWarning($"Terrain edit rejected for client {caller.ClientId}: radius {radius} or depth {depth} out of range");
+                return;
+            }
+
+            float distance = Vector3.Distance(caller.FirstObject.transform.position, position);
+            if (distance > _maxEditReach)
+            {
+                this.LogWarning($"Terrain edit rejected for client {caller.ClientId}: {distance:F1} m away (max {_maxEditReach} m)");
+                return;
+            }
+
+            if (_lastEditTime.TryGetValue(caller.ClientId, out float last) && Time.time - last < _minEditInterval)
+                return;
+
+            if (_streaming == null)
+                return;
+
+            Vector2Int chunk = _streaming.ChunkAt(position);
+            if (!_streaming.TryGetLoadedTerrain(chunk, out _))
+            {
+                this.LogWarning($"Terrain edit rejected for client {caller.ClientId}: chunk {chunk} is not loaded on the server");
+                return;
+            }
+
+            _lastEditTime[caller.ClientId] = Time.time;
+
+            // Applied on the server (and every client) by TerrainEdits_OnChange
+            _terrainEdits.Add(new TerrainEdit(chunk, position, radius, depth));
+        }
+
+        // ==================================================================
+        // Terrain edits — applying
+        // ==================================================================
+
+        private void TerrainEdits_OnChange(SyncListOperation op, int index, TerrainEdit oldItem, TerrainEdit newItem, bool asServer)
+        {
+            if (op != SyncListOperation.Add)
+                return;
+
+            // On the host the server callback already applied it to the shared terrain
+            if (!asServer && IsServerInitialized)
+                return;
+
+            ApplyNewEdit(index, newItem);
+        }
+
+        /// <summary>
+        /// Apply a newly added edit to its chunk if that chunk is loaded here.
+        /// If it isn't, the edit is replayed when the chunk loads.
+        /// </summary>
+        private void ApplyNewEdit(int index, TerrainEdit edit)
+        {
+            if (_streaming == null)
+                return;
+
+            Vector2Int chunk = edit.GetChunk();
+
+            // Not loaded, or not yet registered as ready: replay covers it
+            if (!_editsAppliedUpTo.TryGetValue(chunk, out int appliedUpTo))
+                return;
+
+            // Already applied (e.g. the chunk loaded and replayed it in the meantime)
+            if (index < appliedUpTo)
+                return;
+
+            if (!_streaming.TryGetLoadedTerrain(chunk, out Terrain terrain))
+                return;
+
+            // Catch up on anything between the watermark and this edit, in order
+            int count = _terrainEdits.Count;
+            for (int i = appliedUpTo; i <= index && i < count; i++)
+            {
+                TerrainEdit e = _terrainEdits[i];
+                if (e.GetChunk() == chunk)
+                    e.ApplyTo(terrain);
+            }
+            _editsAppliedUpTo[chunk] = Mathf.Min(index + 1, count);
+
+            // Pathfinding re-reads the heights in the edited area
+            if (TerrainGraphIntegration.Instance != null)
+            {
+                TerrainGraphIntegration.Instance.InvalidateHeightmapCache(chunk);
+                TerrainGraphIntegration.Instance.RequestDirtyRegionRebuild(edit.Position, edit.Radius);
+            }
+        }
+
+        /// <summary>
+        /// A chunk has been generated: replay every edit made to it so far, in order.
+        /// Runs before the chunk counts as loaded, so pathfinding reads the edited heights.
+        /// </summary>
+        private void Streaming_ChunkTerrainReady(Vector2Int chunk, Terrain terrain)
+        {
+            int count = _terrainEdits.Count;
+            int replayed = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                TerrainEdit e = _terrainEdits[i];
+                if (e.GetChunk() != chunk)
+                    continue;
+
+                e.ApplyTo(terrain);
+                replayed++;
+            }
+
+            _editsAppliedUpTo[chunk] = count;
+
+            if (replayed > 0)
+                this.LogInfo($"Replayed {replayed} terrain edit(s) on chunk {chunk}");
+        }
+
+        private void Streaming_OnChunkUnload(Vector2Int chunk)
+        {
+            // Heights are regenerated on the next load, so everything is replayed then
+            _editsAppliedUpTo.Remove(chunk);
+        }
+
+        // ==================================================================
         // Helpers
         // ==================================================================
 
         private void StartStreaming()
         {
-            TerrainStreamingController streaming = FindFirstObjectByType<TerrainStreamingController>();
-            if (streaming == null)
+            if (_streaming == null)
             {
-                this.LogError("No TerrainStreamingController in the scene; the world will not load");
-                return;
+                _streaming = FindFirstObjectByType<TerrainStreamingController>();
+                if (_streaming == null)
+                {
+                    this.LogError("No TerrainStreamingController in the scene; the world will not load");
+                    return;
+                }
+
+                // Subscribe before streaming starts so the first chunks replay their edits too
+                _streaming.ChunkTerrainReady += Streaming_ChunkTerrainReady;
+                _streaming.onChunkUnload.AddListener(Streaming_OnChunkUnload);
             }
 
-            streaming.BeginStreaming(_seed.Value);
+            _streaming.BeginStreaming(_seed.Value);
         }
 
         /// <summary>

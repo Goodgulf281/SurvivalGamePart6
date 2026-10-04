@@ -125,15 +125,22 @@ Expected until later phases: building is local to each player (Phase 3), and the
   - If none is loaded, the chosen spawn point becomes a temporary streaming target until its chunk loads; it is released once the spawned player has registered itself.
   - The spawn position is snapped to the ground the server sees (`GameManager.TryFindGround`, shared with the client-side snap), plus a small height offset.
   - The client still holds its player until its own copy of the chunk has loaded (`GameManager.SetupLocalPlayer`).
-- [ ] Editor setup for spawn points:
+- [x] Editor setup for spawn points:
   - On the NetworkManager, remove FishNet's **PlayerSpawner** and add **WorldPlayerSpawner** (both at once would spawn every player twice).
   - Assign the player prefab, keep **Add To Default Scene** on, and move the spawn point(s) into **Spawns**.
-- [ ] Test: host and client spawn on the ground as before. With a dedicated server or after every player has left the spawn area, a joining client still spawns on loaded ground (the log shows "Loading terrain at spawn point").
-- [ ] Terrain edits:
-  - `DepressTerrainAtPosition` and `RaiseTerrainAtPosition` become a ServerRpc request, with the server checking reach and rate.
-  - The server applies the edit and appends `{chunkCoord, pos, radius, strength}` to a `SyncList<TerrainEdit>` on `WorldState`.
-  - Every machine applies new edits to loaded chunks as they arrive, and replays the matching edits when a chunk loads (after generation, before colliders are used).
-  - The server then calls `InvalidateHeightmapCache` and `RequestDirtyRegionRebuild`.
+- [x] Test: host and client spawn on the ground as before. With a dedicated server or after every player has left the spawn area, a joining client still spawns on loaded ground (the log shows "Loading terrain at spawn point").
+- [x] Terrain edits:
+  - `Builder.DepressTerrainAtPosition` and `RaiseTerrainAtPosition` call `WorldState.RequestTerrainEdit` in a network session (a ServerRpc, `RequireOwnership = false`). Offline they still edit the active terrain directly.
+  - The server checks the request (caller has a player, `_maxEditReach`, `_minEditInterval`, `_maxEditRadius`/`_maxEditDepth`, chunk loaded on the server) and appends a `TerrainEdit {chunk, position, radius, depth}` (`TerrainUtils/TerrainEdit.cs`) to `SyncList<TerrainEdit> _terrainEdits` on `WorldState`.
+  - Every machine applies new edits to loaded chunks from the list's `OnChange` (the host only once, from the server callback), and replays a chunk's edits from `TerrainStreamingController.ChunkTerrainReady`, raised after generation and prefab placement but before the chunk counts as loaded.
+  - A per-chunk count of applied edits makes each edit apply exactly once per load of a chunk, whether it arrives live or is replayed.
+  - Every machine that applies an edit live calls `InvalidateHeightmapCache` and `RequestDirtyRegionRebuild`, since `TerrainGraphIntegration` still runs everywhere (Phase 5 moves it to the server).
+  - Edits only live for the session; saving them is Phase 6.
+- [ ] Test: no editor setup needed (the limits are new fields on the `WorldState` component).
+  - Raise and depress terrain on the host and on the client; both see every edit.
+  - Edit a chunk, walk until it unloads (beyond the unload radius) and come back: the edit is still there. A client that joins after edits were made sees them too.
+  - After edits, the F9 dumps from host and client still match (the heightmap hashes include the edits).
+  - An edit further away than **Max Edit Reach** is rejected (logged on the server).
 
 ## Phase 3: Building (one networked object per BuildingArea)
 

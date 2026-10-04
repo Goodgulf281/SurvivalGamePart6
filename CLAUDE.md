@@ -46,6 +46,8 @@ TerrainGraphIntegration.Instance.InvalidateObstacleCache(position, radius); // o
 ```
 Otherwise the obstacle cache keeps stale walkability. Terrain height edits need `InvalidateHeightmapCache(chunkCoord)` and/or `RequestDirtyRegionRebuild(...)`.
 
+In a network session, terrain height edits must go through `WorldState.RequestTerrainEdit` (as `Builder.DepressTerrainAtPosition`/`RaiseTerrainAtPosition` do), never straight to `TerrainData`: the server validates them and adds them to a synced list that every machine applies to loaded chunks and replays on chunk load (`TerrainStreamingController.ChunkTerrainReady`). An edit made only locally is lost when the chunk reloads and breaks determinism between machines.
+
 ### Determinism (multiplayer)
 Terrain is never sent over the network: every machine regenerates chunks and scatter from a shared seed, so generation must be bit-identical across editor, builds and sessions. Never seed or hash with `GetInstanceID()` or `string.GetHashCode()`; use `StableHash.Fnv1a(...)` (scatter rules are keyed by prefab *name*). If the cached placement format or its inputs change, bump `ChunkPrefabCache.CurrentCacheVersion` so stale caches are rejected. Server-authoritative code should check `IsServerInitialized` / `InstanceFinder.IsServerStarted`, not "am I the host".
 
