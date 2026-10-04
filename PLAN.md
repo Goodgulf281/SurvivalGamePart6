@@ -197,7 +197,7 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
   - Clients run the existing effect on their copies (blue flash, unfreeze rigidbody, push, destroy after 10 s) and stop tracking them, so the later record removal finds nothing to destroy. The RPC arrives before the SyncType change (§13); if it ever didn't, the copy would just disappear.
   - A player's destroy still removes pieces immediately, without the effect, as before.
 - [ ] Optional debug: sync `Distance` into `PieceRecord` for the `ShowDistances` overlay.
-- [ ] Test (no editor setup needed):
+- [x] Test (no editor setup needed):
   - Build an overhang beyond `RecalculationWorker` → **Max Strength** on the host and on the client: on both screens the unsupported pieces turn blue, fall and disappear after about 10 s.
   - Do the same far away from the host's player (beyond one building area, 100 m): the client's overhang still collapses, because the server now recalculates around every player.
   - Destroy a supporting piece so the rest collapses; the collapse shows on both.
