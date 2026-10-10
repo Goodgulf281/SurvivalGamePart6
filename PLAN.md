@@ -205,6 +205,10 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
 
 ## Phase 5: Pathfinding and NPCs
 
+Pathfinding is built and used only on the server; clients just follow the agents' NetworkTransforms.
+
+![Server-authoritative pathfinding and NPCs](docs/phase5-pathfinding.svg)
+
 - [x] Initialize `TerrainGraphIntegration` only on the server: `GameManager.InitializePathfinding`, called from `InitializeGameLogic` when the world is ready (no local player needed, so a dedicated server builds the graph too). Pure clients disable the component instead.
   - `InvalidateHeightmapCache` and `RequestDirtyRegionRebuild` now do nothing before the graph exists (like `InvalidateObstacleCache` already did), so calls on clients are harmless. `NetworkBuildingArea` no longer invalidates on clients at all.
 - [x] Obstacle and height invalidation on the server after every build, destroy, collapse and terrain edit: covered by Phases 2–4 (`Builder.InstantiateBuildingPrefab`, `Builder.OnConstructedItemRemoved`, `WorldState.ApplyNewEdit`).
@@ -214,8 +218,8 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
   - The agents stay scene objects rather than a spawnable prefab: as scene NetworkObjects the server spawns them automatically, and their patrol points and leader stay plain scene references, which work because only the server reads them.
 - [ ] Optional, editor: a GridCondition or DistanceCondition on the agents so clients only receive nearby NPCs.
 - [ ] Known limitation: the graph covers the chunks around one player (`TerrainStreamingController.Player()`, the host's player or, on a dedicated server, the first player). Agents near another, distant player have no graph there. Fix later by building the graph around every streaming target.
-- [ ] Editor setup: on each scene agent, add a `NetworkObject` and a `NetworkTransform` with **Client Authoritative** off. Leave `PlayerTransform` empty (Target Nearest Player fills it).
-- [ ] Test:
+- [x] Editor setup: on each scene agent, add a `NetworkObject` and a `NetworkTransform` with **Client Authoritative** off. Leave `PlayerTransform` empty (Target Nearest Player fills it).
+- [x] Test:
   - Host and client both see the agents patrol and move smoothly.
   - Approach/flee reacts to whichever player is nearest, including the client's player.
   - Build a wall across an agent's route: it paths around it (on the server).
@@ -223,14 +227,28 @@ Known gaps until Phase 4: structural integrity (`RecalculationWorker`) still onl
 
 ## Phase 6: Persistence and hardening
 
-- [ ] Only the server runs `SaveAllBuildingAreas` and `LoadBuildingArea`. Loading spawns the `NetworkBuildingArea`s and fills `Pieces`, and late joiners receive them automatically. Save the terrain edit list alongside.
-- [ ] Handle disconnects:
-  - Unregister the player's streaming target.
-  - Decide whether building and inventory persist per player.
-- [ ] Latency testing: TransportManager latency simulator at 100–150 ms and 1–3% loss. Check build confirmation latency and collapse timing.
-- [ ] Logging: a FishNet `LevelLoggingConfiguration`. Keep project logging on `IDebuggable`/`GameLogger`.
+The server loads the world save on start (seed and terrain edits sync to clients, pieces rebuild as their chunk loads) and saves it on stop or with the save key.
+
+![World save and load](docs/phase6-persistence.svg)
+
+- [x] World save, server only (`Networking/WorldSave.cs`): one file per process, `persistentDataPath/Saves[_<mppm id>]/world.json`, holding the seed, every piece in build order (template, position, rotation, snap index) and the terrain edit list. It replaces the old per-area JSON files (and the old loader's hard-coded `1.json`–`3.json`, which also dropped the snap index).
+  - `WorldState` loads it in `OnStartServer` (**Load Save On Start**): the save's seed replaces the default and `-seed`, the terrain edits go into the synced list before streaming starts, and the pieces go to `Builder.QueueSavedPieces`.
+  - `Builder` rebuilds saved pieces through the normal `InstantiateBuildingPrefab` (grounding, neighbours, IDs and `NetworkBuildingArea` records recomputed) as soon as their chunk is loaded on the server, in build order. Pieces on chunks nobody has visited wait and are still written back on the next save.
+  - `WorldState.SaveWorld` runs when the server stops (**Save On Server Stop**) and from the save key (`BuilderInput.OnSave` → `Builder.SaveAllBuildingAreas`). The write goes to a temporary file first.
+  - `WorldState.LoadWorld` (the load key) only loads into an untouched world with the same seed; anything else is refused with a log line, because it would duplicate pieces or need different terrain.
+  - Late joiners get everything through the existing `Pieces` records and terrain edit list.
+- [x] Handle disconnects:
+  - The player's streaming target is unregistered when its object despawns (`ThirdPersonController.OnStopServer`, Phase 2). `WorldState` also forgets the client's terrain edit rate limit.
+  - Decision: building belongs to the world, not to a player, so it persists in the world save whoever built it. The inventory is per connection and resets on reconnect: without an Authenticator there is no stable player identity to save it under.
+- [ ] Test (no editor setup needed):
+  - Build, edit the terrain, stop the host: the log shows "World saved to …". Start again: the same pieces and terrain edits are back, on host and client.
+  - Build on a chunk far from spawn, save, restart: those pieces appear when you walk there.
+  - A client that joins after the load sees everything.
+  - The load key in a world that already has pieces is refused.
+- [ ] Latency testing (editor): on the NetworkManager's TransportManager, enable the **Latency Simulator** at 100–150 ms and 1–3% packet loss. Check build confirmation latency, terrain edits and collapse timing.
+- [ ] Logging (editor): create a FishNet **Level Logging Configuration** asset and assign it to the NetworkManager's logging setting. Keep project logging on `IDebuggable`/`GameLogger`.
 - [ ] Later / optional:
-  - Authenticator (player names)
+  - Authenticator (player names), which would also allow saving inventories per player
   - dedicated-server build profile (skip grass/detail/visual scatter on headless)
   - client-side prediction for movement
 
