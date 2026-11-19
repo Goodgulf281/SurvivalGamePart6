@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img">
+<title>Part 1 sketchbook: same world, no terrain sent</title>
+<desc>Hand-drawn overview of Part 1 of the multiplayer series. Phase 0: the seed generates the same trees on host and client, proven by an F9 dump diff with zero differences, after replacing GetInstanceID with StableHash and fixing two bugs. Phase 1: the owner's player has input on and moves, the remote copy follows its NetworkTransform, and startup waits for the world and the player before SetupLocalPlayer holds, snaps and releases the player. Phase 2: WorldState sends the seed to everyone, streaming loads the union of circles around all players, and terrain edits are server-checked requests stored in a synced list that every machine applies exactly once.</desc>
+<defs>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&amp;display=swap');
+    text{font-family:'Caveat','Patrick Hand','Comic Sans MS',cursive;fill:#2a2622}
+    .title{font-size:58px;font-weight:700}
+    .sub{font-size:30px;fill:#5b544b}
+    .head{font-size:36px;font-weight:700}
+    .body{font-size:26px}
+    .small{font-size:22px;fill:#4a443d}
+    .ink{fill:none;stroke:#2a2622;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+    .thin{fill:none;stroke:#2a2622;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .dash{stroke-dasharray:7 7}
+    .red{fill:#b8473a}.green{fill:#3f7d4a}.blue{fill:#2f5f8f}
+  </style>
+
+  <!-- Wobbly ink: displaces strokes a little so lines look hand-drawn -->
+  <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="3" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="3"/>
+  </filter>
+  <!-- Watercolor wash: blobby edges -->
+  <filter id="wash" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="3" seed="8" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="14"/>
+  </filter>
+  <!-- Squared sketchbook paper -->
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0 L0 0 0 32" fill="none" stroke="#d7e1ea" stroke-width="1"/>
+  </pattern>
+  <!-- Hand-drawn arrow head -->
+  <marker id="head" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+    <path d="M1.5 1.5 L10.5 6 L2 10.8" fill="none" stroke="#2a2622" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Paper -->
+<rect width="1600" height="1000" fill="#f7f2e6"/>
+<rect width="1600" height="1000" fill="url(#grid)"/>
+<line x1="34" y1="0" x2="34" y2="1000" stroke="#e7b3a8" stroke-width="2"/>
+<!-- Spiral binding -->
+<g class="thin" filter="url(#rough)">
+  <circle cx="200" cy="18" r="9"/><circle cx="360" cy="18" r="9"/><circle cx="520" cy="18" r="9"/><circle cx="680" cy="18" r="9"/>
+  <circle cx="840" cy="18" r="9"/><circle cx="1000" cy="18" r="9"/><circle cx="1160" cy="18" r="9"/><circle cx="1320" cy="18" r="9"/><circle cx="1480" cy="18" r="9"/>
+</g>
+
+<!-- Title -->
+<path d="M70 98 C 400 112, 760 90, 1010 102" fill="none" stroke="#f2c94c" stroke-width="22" stroke-linecap="round" opacity="0.55" filter="url(#wash)"/>
+<text class="title" x="70" y="88">Part 1 · Same world, no terrain sent</text>
+<text class="sub" x="72" y="132">making the survival game multiplayer, phases 0 – 2</text>
+<text class="small" x="1250" y="82">FishNet · host mode</text>
+<text class="small" x="1250" y="110">terrain = generated, never sent!</text>
+<path class="thin" d="M1244 120 C 1320 128, 1420 116, 1530 122" filter="url(#rough)"/>
+
+<!-- ============================ PHASE 0 ============================ -->
+<rect x="58" y="168" width="470" height="652" rx="10" fill="#f6d98a" opacity="0.32" filter="url(#wash)"/>
+<rect class="ink" x="50" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="92" cy="208" r="24" fill="#f2c94c" opacity="0.8" filter="url(#wash)"/>
+<circle class="ink" cx="92" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="83" y="220">0</text>
+<text class="head" x="128" y="219">prove it's the same world</text>
+
+<!-- seed tag -->
+<g filter="url(#rough)">
+  <path class="ink" d="M230 252 L330 252 L350 272 L330 292 L230 292 Z" fill="#fffaf0"/>
+  <circle class="thin" cx="244" cy="272" r="5"/>
+</g>
+<text class="body" x="256" y="281">seed</text>
+<path class="thin" d="M262 296 C 230 312, 200 322, 178 336" marker-end="url(#head)" filter="url(#rough)"/>
+<path class="thin" d="M318 296 C 350 312, 380 322, 402 336" marker-end="url(#head)" filter="url(#rough)"/>
+
+<!-- two monitors with identical trees -->
+<g filter="url(#rough)">
+  <rect class="ink" x="82" y="342" width="176" height="112" rx="6" fill="#fffdf6"/>
+  <line class="ink" x1="170" y1="454" x2="170" y2="474"/><line class="ink" x1="140" y1="476" x2="200" y2="476"/>
+  <rect class="ink" x="322" y="342" width="176" height="112" rx="6" fill="#fffdf6"/>
+  <line class="ink" x1="410" y1="454" x2="410" y2="474"/><line class="ink" x1="380" y1="476" x2="440" y2="476"/>
+</g>
+<g filter="url(#rough)">
+  <!-- host trees -->
+  <path d="M104 430 L120 396 L136 430 Z M150 432 L170 384 L190 432 Z M204 430 L218 402 L232 430 Z" fill="#7fae6a" stroke="#2a2622" stroke-width="1.6"/>
+  <path class="thin" d="M92 434 C 140 426, 200 438, 248 430"/>
+  <!-- client trees: identical -->
+  <path d="M344 430 L360 396 L376 430 Z M390 432 L410 384 L430 432 Z M444 430 L458 402 L472 430 Z" fill="#7fae6a" stroke="#2a2622" stroke-width="1.6"/>
+  <path class="thin" d="M332 434 C 380 426, 440 438, 488 430"/>
+</g>
+<text class="small" x="146" y="507">host</text>
+<text class="small" x="380" y="507">client</text>
+
+<!-- F9 dump -> diff -->
+<g filter="url(#rough)">
+  <path class="thin" d="M110 528 L170 528 L184 542 L184 594 L110 594 Z" fill="#fffdf6"/>
+  <path class="thin" d="M350 528 L410 528 L424 542 L424 594 L350 594 Z" fill="#fffdf6"/>
+  <path class="thin" d="M122 552 L170 552 M122 566 L166 566 M122 580 L158 580"/>
+  <path class="thin" d="M362 552 L410 552 M362 566 L406 566 M362 580 L398 580"/>
+</g>
+<text class="small" x="196" y="564">F9 dump</text>
+<path class="thin" d="M190 588 C 230 612, 250 616, 262 618" marker-end="url(#head)" filter="url(#rough)"/>
+<path class="thin" d="M346 588 C 310 612, 290 616, 278 618" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="body" x="236" y="650">diff</text>
+<path d="M300 636 L312 650 L340 618" fill="none" stroke="#3f7d4a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"/>
+<text class="body green" x="350" y="650">0 differences</text>
+
+<text class="body" x="74" y="700"><tspan class="red">✗</tspan> GetInstanceID()  →  <tspan class="green">✓</tspan> StableHash.Fnv1a</text>
+<text class="small" x="74" y="736">found 2 bugs: cache skipped the terrain flattening,</text>
+<text class="small" x="74" y="762">and loading chunks raced on one terrain field</text>
+<text class="small" x="74" y="798">tools: Multiplayer Play Mode + NetworkBootstrap</text>
+
+<!-- ============================ PHASE 1 ============================ -->
+<rect x="568" y="168" width="470" height="652" rx="10" fill="#b9d3ea" opacity="0.38" filter="url(#wash)"/>
+<rect class="ink" x="560" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="602" cy="208" r="24" fill="#8fb8dc" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="602" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="595" y="220">1</text>
+<text class="head" x="638" y="219">a networked player</text>
+
+<!-- owner stick figure + keyboard -->
+<g filter="url(#rough)">
+  <circle class="ink" cx="650" cy="290" r="16" fill="#fffdf6"/>
+  <path class="ink" d="M650 306 L650 352 M650 322 L626 340 M650 322 L676 334 M650 352 L632 384 M650 352 L668 384"/>
+  <rect class="thin" x="680" y="330" width="56" height="20" rx="3" fill="#fffdf6"/>
+  <path class="thin" d="M688 337 h6 M700 337 h6 M712 337 h6 M724 337 h6 M690 344 h36"/>
+</g>
+<text class="small" x="598" y="420">owner</text>
+<text class="small" x="598" y="446">input ON, moves</text>
+
+<!-- arrow: NetworkTransform -->
+<path class="ink" d="M752 318 C 800 296, 860 296, 902 316" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="small" x="752" y="282">NetworkTransform</text>
+
+<!-- remote copy (dashed ghost) -->
+<g filter="url(#rough)" opacity="0.75">
+  <circle class="ink dash" cx="950" cy="290" r="16"/>
+  <path class="ink dash" d="M950 306 L950 352 M950 322 L926 340 M950 322 L974 340 M950 352 L932 384 M950 352 L968 384"/>
+</g>
+<text class="small" x="896" y="420">remote copy</text>
+<text class="small" x="896" y="446">just follows</text>
+
+<!-- startup: two things meet -->
+<g filter="url(#rough)">
+  <ellipse class="ink" cx="680" cy="510" rx="88" ry="30" fill="#fffdf6"/>
+  <ellipse class="ink" cx="920" cy="510" rx="96" ry="30" fill="#fffdf6"/>
+</g>
+<text class="body" x="622" y="519">world ready</text>
+<text class="body" x="852" y="519">player spawned</text>
+<path class="thin" d="M700 542 C 730 570, 770 582, 790 590" marker-end="url(#head)" filter="url(#rough)"/>
+<path class="thin" d="M900 542 C 870 570, 830 582, 812 590" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="small" x="770" y="560">either order</text>
+<rect x="676" y="598" width="250" height="52" rx="8" fill="#8fb8dc" opacity="0.5" filter="url(#wash)"/>
+<rect class="ink" x="676" y="598" width="250" height="52" rx="8" filter="url(#rough)"/>
+<text class="body" x="702" y="633">SetupLocalPlayer()</text>
+
+<!-- hold -> snap -> release -->
+<g filter="url(#rough)">
+  <path class="thin" d="M800 652 L800 676" marker-end="url(#head)"/>
+  <rect class="thin" x="604" y="684" width="122" height="44" rx="6" fill="#fffdf6"/>
+  <rect class="thin" x="742" y="684" width="122" height="44" rx="6" fill="#fffdf6"/>
+  <rect class="thin" x="880" y="684" width="122" height="44" rx="6" fill="#fffdf6"/>
+  <path class="thin" d="M728 706 L740 706" marker-end="url(#head)"/>
+  <path class="thin" d="M866 706 L878 706" marker-end="url(#head)"/>
+</g>
+<text class="body" x="640" y="715">hold</text>
+<text class="body" x="768" y="715">snap ↓</text>
+<text class="body" x="904" y="715">release</text>
+<text class="small" x="604" y="768">waits for the chunk under the player,</text>
+<text class="small" x="604" y="794">so nobody falls through unloaded terrain</text>
+
+<!-- ============================ PHASE 2 ============================ -->
+<rect x="1078" y="168" width="470" height="652" rx="10" fill="#c9e2b8" opacity="0.4" filter="url(#wash)"/>
+<rect class="ink" x="1070" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="1112" cy="208" r="24" fill="#9cc78a" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="1112" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="1103" y="220">2</text>
+<text class="head" x="1148" y="219">one shared world</text>
+
+<!-- WorldState with seed -->
+<rect class="ink" x="1176" y="248" width="270" height="56" rx="10" fill="#fffdf6" filter="url(#rough)"/>
+<text class="body" x="1194" y="284">WorldState  seed = 12345</text>
+<path class="thin" d="M1240 306 C 1220 326, 1200 334, 1180 342" marker-end="url(#head)" filter="url(#rough)"/>
+<path class="thin" d="M1380 306 C 1400 326, 1420 334, 1440 342" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="small" x="1130" y="364">host</text>
+<text class="small" x="1440" y="364">client</text>
+<text class="small" x="1232" y="344">BeginStreaming(seed)</text>
+
+<!-- streaming: union of circles around players -->
+<g filter="url(#wash)" opacity="0.5">
+  <circle cx="1240" cy="452" r="62" fill="#9cc78a"/>
+  <circle cx="1350" cy="462" r="62" fill="#9cc78a"/>
+</g>
+<g filter="url(#rough)">
+  <circle class="thin dash" cx="1240" cy="452" r="62"/>
+  <circle class="thin dash" cx="1350" cy="462" r="62"/>
+  <circle cx="1240" cy="452" r="7" fill="#2f5f8f"/>
+  <circle cx="1350" cy="462" r="7" fill="#b8473a"/>
+</g>
+<text class="small" x="1420" y="430">load = union</text>
+<text class="small" x="1420" y="454">of circles</text>
+<text class="small" x="1420" y="490">host player:</text>
+<text class="small" x="1420" y="514">counted twice</text>
+<text class="small" x="1090" y="552">WorldPlayerSpawner: spawn only on loaded ground</text>
+
+<!-- terrain edit chain -->
+<g filter="url(#rough)">
+  <rect class="thin" x="1096" y="572" width="168" height="44" rx="6" fill="#fffdf6"/>
+  <rect class="thin" x="1300" y="572" width="226" height="44" rx="6" fill="#fffdf6"/>
+  <path class="thin" d="M1266 594 L1296 594" marker-end="url(#head)"/>
+  <path class="thin" d="M1412 618 L1412 640" marker-end="url(#head)"/>
+  <rect class="thin" x="1290" y="646" width="244" height="44" rx="6" fill="#fffdf6"/>
+  <path class="thin" d="M1412 692 L1412 714" marker-end="url(#head)"/>
+</g>
+<text class="body" x="1110" y="603">client: raise!</text>
+<text class="small" x="1312" y="601">server: reach · rate · size</text>
+<text class="body" x="1302" y="677">SyncList&lt;TerrainEdit&gt;</text>
+<rect x="1096" y="720" width="438" height="80" rx="8" fill="#9cc78a" opacity="0.45" filter="url(#wash)"/>
+<rect class="ink" x="1096" y="720" width="438" height="80" rx="8" filter="url(#rough)"/>
+<text class="body" x="1114" y="752">applied live on every machine</text>
+<text class="body" x="1114" y="786">+ replayed on chunk load (exactly once)</text>
+
+
+<!-- ============================ PRINCIPLES (sticky notes) ============================ -->
+<g filter="url(#rough)">
+  <rect x="96" y="852" width="420" height="112" fill="#f9e27d" transform="rotate(-2 306 908)"/>
+  <rect x="590" y="852" width="420" height="112" fill="#f6b8c1" transform="rotate(1.5 800 908)"/>
+  <rect x="1084" y="852" width="420" height="112" fill="#bfe0f2" transform="rotate(-1 1294 908)"/>
+</g>
+<g transform="rotate(-2 306 908)">
+  <text class="head" x="120" y="896">Send rules, not data</text>
+  <text class="body" x="120" y="938">a seed instead of terrain</text>
+</g>
+<g transform="rotate(1.5 800 908)">
+  <text class="head" x="614" y="896">Server decides, clients ask</text>
+  <text class="body" x="614" y="938">every request is validated</text>
+</g>
+<g transform="rotate(-1 1294 908)">
+  <text class="head" x="1108" y="896">Prove it</text>
+  <text class="body" x="1108" y="938">the F9 diff turned "I think" into proof</text>
+</g>
+<!-- tape -->
+<g opacity="0.55">
+  <rect x="270" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-6 307 851)"/>
+  <rect x="764" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(4 801 851)"/>
+  <rect x="1258" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-3 1295 851)"/>
+</g>
+</svg>
