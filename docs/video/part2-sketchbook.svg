@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img">
+<title>Part 2 sketchbook: building together</title>
+<desc>Hand-drawn overview of Part 2 of the multiplayer series. Phase 3: each 100 by 100 metre building area is one NetworkBuildingArea holding small PieceRecords in a SyncDictionary instead of a network object per block. Placing a piece: the client previews, snaps and rotates locally, sends ServerRequestBuild, the server checks reach, rate, inventory, non-buildable areas and duplicates, rejects with a log line or builds the real piece and adds a record, and other clients build a copy while the host skips it. Phase 4: the server computes each piece's distance to the ground; unsupported pieces collapse, the ObserversCollapse RPC reaches clients before the record removal so they play the fall. Bug hunt: a world origin of -1500 mapped half of every chunk to its neighbour so blocks floated, fixed by asking the streaming controller for chunk coordinates.</desc>
+<defs>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&amp;display=swap');
+    text{font-family:'Caveat','Patrick Hand','Comic Sans MS',cursive;fill:#2a2622}
+    .title{font-size:58px;font-weight:700}
+    .sub{font-size:30px;fill:#5b544b}
+    .head{font-size:36px;font-weight:700}
+    .body{font-size:26px}
+    .small{font-size:22px;fill:#4a443d}
+    .ink{fill:none;stroke:#2a2622;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+    .thin{fill:none;stroke:#2a2622;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .dash{stroke-dasharray:7 7}
+    .red{fill:#b8473a}.green{fill:#3f7d4a}.blue{fill:#2f5f8f}
+  </style>
+
+  <!-- Wobbly ink: displaces strokes a little so lines look hand-drawn -->
+  <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="5" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="3"/>
+  </filter>
+  <!-- Watercolor wash: blobby edges -->
+  <filter id="wash" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="3" seed="11" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="14"/>
+  </filter>
+  <!-- Squared sketchbook paper -->
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0 L0 0 0 32" fill="none" stroke="#d7e1ea" stroke-width="1"/>
+  </pattern>
+  <!-- Hand-drawn arrow head -->
+  <marker id="head" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+    <path d="M1.5 1.5 L10.5 6 L2 10.8" fill="none" stroke="#2a2622" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Paper -->
+<rect width="1600" height="1000" fill="#f7f2e6"/>
+<rect width="1600" height="1000" fill="url(#grid)"/>
+<line x1="34" y1="0" x2="34" y2="1000" stroke="#e7b3a8" stroke-width="2"/>
+<!-- Spiral binding -->
+<g class="thin" filter="url(#rough)">
+  <circle cx="200" cy="18" r="9"/><circle cx="360" cy="18" r="9"/><circle cx="520" cy="18" r="9"/><circle cx="680" cy="18" r="9"/>
+  <circle cx="840" cy="18" r="9"/><circle cx="1000" cy="18" r="9"/><circle cx="1160" cy="18" r="9"/><circle cx="1320" cy="18" r="9"/><circle cx="1480" cy="18" r="9"/>
+</g>
+
+<!-- Title -->
+<path d="M70 98 C 300 112, 560 90, 760 102" fill="none" stroke="#e8a35c" stroke-width="22" stroke-linecap="round" opacity="0.5" filter="url(#wash)"/>
+<text class="title" x="70" y="88">Part 2 · Building together</text>
+<text class="sub" x="72" y="132">making the survival game multiplayer, phases 3 – 4</text>
+<text class="small" x="1250" y="82">the server builds,</text>
+<text class="small" x="1250" y="110">clients only copy</text>
+<path class="thin" d="M1244 120 C 1320 128, 1420 116, 1530 122" filter="url(#rough)"/>
+
+<!-- ============================ ONE OBJECT PER AREA ============================ -->
+<rect x="58" y="168" width="470" height="652" rx="10" fill="#f0c49a" opacity="0.32" filter="url(#wash)"/>
+<rect class="ink" x="50" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="92" cy="208" r="24" fill="#e8a35c" opacity="0.8" filter="url(#wash)"/>
+<circle class="ink" cx="92" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="83" y="220">3</text>
+<text class="head" x="128" y="219">one object per area</text>
+
+<!-- building area with a little house of blocks -->
+<rect class="ink dash" x="76" y="262" width="230" height="190" rx="4" filter="url(#rough)"/>
+<text class="small" x="84" y="484">building area 100 × 100 m</text>
+<g filter="url(#rough)">
+  <path class="thin" d="M86 432 C 150 426, 230 438, 296 430"/>
+  <rect x="118" y="390" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="158" y="390" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="198" y="390" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="118" y="350" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="198" y="350" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <path d="M110 350 L178 296 L246 350 Z" fill="#c07a4f" stroke="#2a2622" stroke-width="1.6"/>
+</g>
+
+<!-- the one network object holding records -->
+<path class="ink" d="M312 356 C 324 350, 334 350, 344 356" marker-end="url(#head)" filter="url(#rough)"/>
+<rect x="352" y="270" width="160" height="180" rx="8" fill="#e8a35c" opacity="0.35" filter="url(#wash)"/>
+<rect class="ink" x="352" y="270" width="160" height="180" rx="8" filter="url(#rough)"/>
+<text class="body" x="366" y="302">1 network</text>
+<text class="body" x="366" y="330">object</text>
+<path class="thin" d="M364 342 L500 342" filter="url(#rough)"/>
+<text class="small" x="366" y="368">#12 wall</text>
+<text class="small" x="366" y="394">#13 wall</text>
+<text class="small" x="366" y="420">#14 roof …</text>
+
+<text class="body" x="74" y="532">PieceRecord { Id, Template, Pos, Rot, Snap }</text>
+<text class="body" x="74" y="574"><tspan class="red">✗</tspan> a NetworkObject per block</text>
+<text class="body" x="74" y="610"><tspan class="green">✓</tspan> small records in a SyncDictionary</text>
+<text class="small" x="74" y="664">late joiners: build every existing record</text>
+<text class="small" x="74" y="700">inventory: server writes, only the owner reads</text>
+<text class="small" x="74" y="736">areas live on the Builder now, not on the</text>
+<text class="small" x="74" y="762">terrain chunk (which unloads)</text>
+
+<!-- ============================ PLACING A PIECE ============================ -->
+<rect x="568" y="168" width="470" height="652" rx="10" fill="#b9d3ea" opacity="0.38" filter="url(#wash)"/>
+<rect class="ink" x="560" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="602" cy="208" r="24" fill="#8fb8dc" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="602" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="595" y="220">3</text>
+<text class="head" x="638" y="219">placing a piece</text>
+
+<!-- client: ghost preview block + cursor -->
+<g filter="url(#rough)">
+  <rect class="ink dash" x="600" y="252" width="56" height="56" fill="#ffffff" fill-opacity="0.5"/>
+  <path d="M664 300 L664 330 L672 322 L680 338 L686 335 L678 319 L690 319 Z" fill="#2a2622"/>
+</g>
+<text class="body" x="704" y="276">you: preview · snap · rotate</text>
+<text class="small" x="704" y="304">all local, so it feels instant</text>
+
+<path class="thin" d="M800 318 L800 340" marker-end="url(#head)" filter="url(#rough)"/>
+<rect class="ink" x="680" y="346" width="240" height="48" rx="8" fill="#fffdf6" filter="url(#rough)"/>
+<text class="body" x="698" y="378">ServerRequestBuild()</text>
+
+<path class="thin" d="M800 396 L800 418" marker-end="url(#head)" filter="url(#rough)"/>
+<rect x="680" y="424" width="240" height="84" rx="8" fill="#8fb8dc" opacity="0.45" filter="url(#wash)"/>
+<rect class="ink" x="680" y="424" width="240" height="84" rx="8" filter="url(#rough)"/>
+<text class="body" x="698" y="458">server checks:</text>
+<text class="small" x="698" y="490">reach · rate · stock · dupes</text>
+
+<!-- rejected branch -->
+<path class="thin" d="M680 466 L652 466" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="head red" x="588" y="476">✗</text>
+<text class="small red" x="580" y="500">logged</text>
+
+<path class="thin" d="M800 510 L800 532" marker-end="url(#head)" filter="url(#rough)"/>
+<rect class="ink" x="650" y="538" width="300" height="52" rx="8" fill="#fffdf6" filter="url(#rough)"/>
+<text class="body" x="668" y="572">real piece + AddPiece(record)</text>
+
+<path class="thin" d="M740 592 C 720 610, 700 618, 690 628" marker-end="url(#head)" filter="url(#rough)"/>
+<path class="thin" d="M860 592 C 880 610, 900 618, 910 628" marker-end="url(#head)" filter="url(#rough)"/>
+<g filter="url(#rough)">
+  <rect class="thin" x="584" y="634" width="200" height="66" rx="8" fill="#fffdf6"/>
+  <rect class="thin" x="816" y="634" width="200" height="66" rx="8" fill="#fffdf6"/>
+</g>
+<text class="body" x="600" y="662">host: skips it</text>
+<text class="small" x="600" y="688">already in its scene</text>
+<text class="body" x="832" y="662">clients: copy</text>
+<text class="small" x="832" y="688">from the record</text>
+
+<text class="small" x="584" y="752">the request lives on the player, so the</text>
+<text class="small" x="584" y="778">server always knows who is asking</text>
+
+<!-- ============================ COLLAPSES ============================ -->
+<rect x="1078" y="168" width="470" height="652" rx="10" fill="#c9e2b8" opacity="0.4" filter="url(#wash)"/>
+<rect class="ink" x="1070" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="1112" cy="208" r="24" fill="#9cc78a" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="1112" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="1103" y="220">4</text>
+<text class="head" x="1148" y="219">collapses on every screen</text>
+
+<!-- pillar + overhang, last blocks falling -->
+<g filter="url(#rough)">
+  <path class="ink" d="M1092 424 C 1200 418, 1360 430, 1530 422"/>
+  <rect x="1120" y="384" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="1120" y="344" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="1120" y="304" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="1160" y="304" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="1200" y="304" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="1240" y="304" width="40" height="40" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6"/>
+  <rect x="1300" y="320" width="40" height="40" fill="#8fb8dc" stroke="#2a2622" stroke-width="1.6" transform="rotate(14 1320 340)"/>
+  <rect x="1352" y="352" width="40" height="40" fill="#8fb8dc" stroke="#2a2622" stroke-width="1.6" transform="rotate(32 1372 372)"/>
+  <path class="thin" d="M1318 300 L1314 290 M1332 302 L1336 292 M1374 334 L1372 322 M1388 338 L1394 328"/>
+</g>
+<text class="small" x="1132" y="410">0</text>
+<text class="small" x="1174" y="330">1</text>
+<text class="small" x="1214" y="330">2</text>
+<text class="small" x="1254" y="330">3</text>
+<text class="small" x="1414" y="300">too far from</text>
+<text class="small" x="1414" y="324">the ground!</text>
+<path class="thin" d="M1410 316 C 1398 322, 1392 328, 1386 336" marker-end="url(#head)" filter="url(#rough)"/>
+
+<text class="body" x="1094" y="470">server: Dijkstra → distance to ground</text>
+<text class="small" x="1094" y="500">runs around every player, never on clients</text>
+
+<rect x="1094" y="526" width="432" height="70" rx="8" fill="#9cc78a" opacity="0.45" filter="url(#wash)"/>
+<rect class="ink" x="1094" y="526" width="432" height="70" rx="8" filter="url(#rough)"/>
+<text class="body" x="1112" y="556">① ObserversCollapse(ids)</text>
+<text class="small" x="1112" y="584">clients play the fall on their copies</text>
+
+<path class="thin" d="M1310 598 L1310 620" marker-end="url(#head)" filter="url(#rough)"/>
+<rect class="ink" x="1094" y="626" width="432" height="70" rx="8" fill="#fffdf6" filter="url(#rough)"/>
+<text class="body" x="1112" y="656">② record removed</text>
+<text class="small" x="1112" y="684">the copy is already falling: nothing to delete</text>
+
+<text class="small" x="1094" y="740">why it works: an RPC goes out at once,</text>
+<text class="small" x="1094" y="766">SyncType changes are batched (0.1 s)</text>
+<text class="small" x="1094" y="800">destroy = same hook, without the fall</text>
+
+<!-- ============================ STICKY NOTES ============================ -->
+<g filter="url(#rough)">
+  <rect x="96" y="852" width="420" height="112" fill="#f9e27d" transform="rotate(-2 306 908)"/>
+  <rect x="590" y="852" width="420" height="112" fill="#f6b8c1" transform="rotate(1.5 800 908)"/>
+  <rect x="1084" y="852" width="420" height="112" fill="#bfe0f2" transform="rotate(-1 1294 908)"/>
+</g>
+<g transform="rotate(-2 306 908)">
+  <text class="head" x="120" y="896">Records, not objects</text>
+  <text class="body" x="120" y="938">PieceRecords instead of NetworkObjects</text>
+</g>
+<g transform="rotate(1.5 800 908)">
+  <text class="head" x="614" y="896">One hook for every removal</text>
+  <text class="body" x="614" y="938">OnConstructedItemRemoved()</text>
+</g>
+<g transform="rotate(-1 1294 908)">
+  <text class="head" x="1108" y="890">Bug hunt: floating blocks</text>
+  <text class="small" x="1108" y="922">worldOrigin −1500 sent half of every chunk</text>
+  <text class="small" x="1108" y="948">to its neighbour → fixed with ChunkAt()</text>
+</g>
+<!-- tape -->
+<g opacity="0.55">
+  <rect x="270" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-6 307 851)"/>
+  <rect x="764" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(4 801 851)"/>
+  <rect x="1258" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-3 1295 851)"/>
+</g>
+</svg>

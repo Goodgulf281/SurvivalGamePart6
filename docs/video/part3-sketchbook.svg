@@ -1,0 +1,224 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img">
+<title>Part 3 sketchbook: NPCs and a persistent world</title>
+<desc>Hand-drawn overview of Part 3 of the multiplayer series. Phase 5: the pathfinding graph is built only on the server as soon as the world is ready and is disabled on clients; NPCs only think and move on the server and clients watch them through a NetworkTransform. NPCs chase the nearest player, re-checked every half second; known limitation: the graph only covers the area around one player. Phase 6: the world save world.json holds the seed, the pieces in build order and the terrain edits; it is loaded when the server starts and saved on stop or with the save key; saved pieces are rebuilt when their chunk loads, and pieces on unvisited chunks wait but are still saved.</desc>
+<defs>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&amp;display=swap');
+    text{font-family:'Caveat','Patrick Hand','Comic Sans MS',cursive;fill:#2a2622}
+    .title{font-size:58px;font-weight:700}
+    .sub{font-size:30px;fill:#5b544b}
+    .head{font-size:36px;font-weight:700}
+    .body{font-size:26px}
+    .small{font-size:22px;fill:#4a443d}
+    .ink{fill:none;stroke:#2a2622;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+    .thin{fill:none;stroke:#2a2622;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .dash{stroke-dasharray:7 7}
+    .red{fill:#b8473a}.green{fill:#3f7d4a}.blue{fill:#2f5f8f}
+  </style>
+
+  <!-- Wobbly ink: displaces strokes a little so lines look hand-drawn -->
+  <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="3"/>
+  </filter>
+  <!-- Watercolor wash: blobby edges -->
+  <filter id="wash" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="3" seed="14" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="14"/>
+  </filter>
+  <!-- Squared sketchbook paper -->
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0 L0 0 0 32" fill="none" stroke="#d7e1ea" stroke-width="1"/>
+  </pattern>
+  <!-- Small pathfinding-grid cells -->
+  <pattern id="cells" width="20" height="20" patternUnits="userSpaceOnUse">
+    <path d="M20 0 L0 0 0 20" fill="none" stroke="#6e6a8f" stroke-width="1"/>
+  </pattern>
+  <!-- Hand-drawn arrow head -->
+  <marker id="head" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+    <path d="M1.5 1.5 L10.5 6 L2 10.8" fill="none" stroke="#2a2622" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Paper -->
+<rect width="1600" height="1000" fill="#f7f2e6"/>
+<rect width="1600" height="1000" fill="url(#grid)"/>
+<line x1="34" y1="0" x2="34" y2="1000" stroke="#e7b3a8" stroke-width="2"/>
+<!-- Spiral binding -->
+<g class="thin" filter="url(#rough)">
+  <circle cx="200" cy="18" r="9"/><circle cx="360" cy="18" r="9"/><circle cx="520" cy="18" r="9"/><circle cx="680" cy="18" r="9"/>
+  <circle cx="840" cy="18" r="9"/><circle cx="1000" cy="18" r="9"/><circle cx="1160" cy="18" r="9"/><circle cx="1320" cy="18" r="9"/><circle cx="1480" cy="18" r="9"/>
+</g>
+
+<!-- Title -->
+<path d="M70 98 C 360 112, 680 90, 960 102" fill="none" stroke="#a99be0" stroke-width="22" stroke-linecap="round" opacity="0.5" filter="url(#wash)"/>
+<text class="title" x="70" y="88">Part 3 · NPCs and a world that stays</text>
+<text class="sub" x="72" y="132">making the survival game multiplayer, phases 5 – 6</text>
+<text class="small" x="1250" y="82">the server thinks,</text>
+<text class="small" x="1250" y="110">the server remembers</text>
+<path class="thin" d="M1244 120 C 1320 128, 1420 116, 1530 122" filter="url(#rough)"/>
+
+<!-- ============================ NPCs ON THE SERVER ============================ -->
+<rect x="58" y="168" width="470" height="652" rx="10" fill="#cfc6ee" opacity="0.38" filter="url(#wash)"/>
+<rect class="ink" x="50" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="92" cy="208" r="24" fill="#a99be0" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="92" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="83" y="220">5</text>
+<text class="head" x="128" y="219">NPCs think on the server</text>
+
+<text class="body" x="120" y="282">server</text>
+<text class="body" x="366" y="282">client</text>
+
+<!-- server: graph with a wall and a path around it -->
+<rect x="80" y="296" width="200" height="140" fill="url(#cells)" opacity="0.6"/>
+<rect class="ink" x="80" y="296" width="200" height="140" rx="4" filter="url(#rough)"/>
+<rect x="180" y="316" width="20" height="100" fill="#d9a66b" stroke="#2a2622" stroke-width="1.6" filter="url(#rough)"/>
+<path d="M110 410 C 130 360, 150 322, 190 306 C 230 300, 240 340, 254 400" fill="none" stroke="#3f7d4a" stroke-width="3" stroke-dasharray="2 6" stroke-linecap="round"/>
+<circle cx="110" cy="410" r="8" fill="#6b5cc7" stroke="#2a2622" stroke-width="1.4"/>
+<path class="thin" d="M246 392 L256 404 L262 390" filter="url(#rough)"/>
+
+<!-- client: graph switched off -->
+<rect x="320" y="296" width="190" height="140" fill="url(#cells)" opacity="0.25"/>
+<rect class="ink dash" x="320" y="296" width="190" height="140" rx="4" filter="url(#rough)"/>
+<path d="M346 316 L486 418 M486 316 L346 418" stroke="#b8473a" stroke-width="4" stroke-linecap="round" fill="none" filter="url(#rough)"/>
+<text class="small" x="344" y="466">graph disabled</text>
+<text class="small" x="96" y="466">graph + NPC brain</text>
+
+<text class="small" x="74" y="506">Update(): if (!IsServerInitialized) return;</text>
+
+<!-- NPC -> clients watch -->
+<g filter="url(#rough)">
+  <path d="M96 590 C 96 556, 144 556, 144 590 L144 616 L96 616 Z" fill="#a99be0" stroke="#2a2622" stroke-width="2"/>
+  <circle cx="112" cy="584" r="3.5" fill="#2a2622"/><circle cx="128" cy="584" r="3.5" fill="#2a2622"/>
+</g>
+<path class="ink" d="M160 590 C 220 570, 300 570, 360 588" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="small" x="192" y="562">NetworkTransform</text>
+<g filter="url(#rough)" opacity="0.7">
+  <path class="ink dash" d="M376 590 C 376 556, 424 556, 424 590 L424 616 L376 616 Z"/>
+</g>
+<text class="small" x="440" y="598">clients</text>
+<text class="small" x="440" y="620">watch</text>
+
+<text class="small" x="74" y="684">built as soon as the world is ready:</text>
+<text class="small" x="74" y="710">a dedicated server has no local player!</text>
+<text class="small" x="74" y="756">NPCs stay scene objects, so patrol points</text>
+<text class="small" x="74" y="782">and leaders are plain server-side references</text>
+
+<!-- ============================ NEAREST PLAYER ============================ -->
+<rect x="568" y="168" width="470" height="652" rx="10" fill="#b9d3ea" opacity="0.38" filter="url(#wash)"/>
+<rect class="ink" x="560" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="602" cy="208" r="24" fill="#8fb8dc" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="602" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="595" y="220">5</text>
+<text class="head" x="638" y="219">chase the nearest player</text>
+
+<!-- NPC with lines to two players -->
+<g filter="url(#rough)">
+  <path d="M776 296 C 776 262, 824 262, 824 296 L824 322 L776 322 Z" fill="#a99be0" stroke="#2a2622" stroke-width="2"/>
+  <circle cx="792" cy="290" r="3.5" fill="#2a2622"/><circle cx="808" cy="290" r="3.5" fill="#2a2622"/>
+  <!-- host player (near) -->
+  <circle class="ink" cx="660" cy="400" r="13" fill="#fffdf6"/>
+  <path class="ink" d="M660 413 L660 448 M660 425 L642 438 M660 425 L678 438 M660 448 L646 474 M660 448 L674 474"/>
+  <!-- client player (far) -->
+  <circle class="ink" cx="980" cy="420" r="13" fill="#fffdf6"/>
+  <path class="ink" d="M980 433 L980 468 M980 445 L962 458 M980 445 L998 458 M980 468 L966 494 M980 468 L994 494"/>
+</g>
+<path class="ink" d="M780 326 C 750 350, 712 372, 680 392" marker-end="url(#head)" filter="url(#rough)"/>
+<path class="thin dash" d="M824 322 C 870 350, 920 382, 962 408" filter="url(#rough)"/>
+<text class="small" x="700" y="404">nearest:</text>
+<text class="small" x="700" y="428">approach</text>
+<text class="small" x="900" y="358">farther</text>
+<text class="small" x="844" y="262">re-checked every 0.5 s</text>
+<text class="body" x="604" y="532">Target Nearest Player = on</text>
+<text class="small" x="604" y="560">host or client, whoever is closest</text>
+
+<!-- limitation: graph around one player -->
+<text class="body red" x="604" y="616">known limitation</text>
+<circle cx="680" cy="704" r="74" fill="url(#cells)" opacity="0.5"/>
+<circle class="ink" cx="680" cy="704" r="74" filter="url(#rough)"/>
+<circle cx="680" cy="704" r="8" fill="#2f5f8f"/>
+<text class="small" x="626" y="760">graph</text>
+<g filter="url(#rough)">
+  <circle cx="920" cy="690" r="8" fill="#b8473a"/>
+  <path d="M968 670 C 968 650, 1000 650, 1000 670 L1000 688 L968 688 Z" fill="#a99be0" stroke="#2a2622" stroke-width="1.8"/>
+</g>
+<text class="head" x="1004" y="666">?</text>
+<text class="small" x="836" y="730">far player: no</text>
+<text class="small" x="836" y="754">graph for NPCs here</text>
+<text class="small" x="604" y="806">fix later: build the graph around every player</text>
+
+<!-- ============================ SAVE THE WORLD ============================ -->
+<rect x="1078" y="168" width="470" height="652" rx="10" fill="#f6d98a" opacity="0.34" filter="url(#wash)"/>
+<rect class="ink" x="1070" y="160" width="480" height="660" rx="12" filter="url(#rough)"/>
+<circle cx="1112" cy="208" r="24" fill="#f2c94c" opacity="0.85" filter="url(#wash)"/>
+<circle class="ink" cx="1112" cy="208" r="24" filter="url(#rough)"/>
+<text class="head" x="1103" y="220">6</text>
+<text class="head" x="1148" y="219">save the world</text>
+
+<!-- world.json page -->
+<g filter="url(#rough)">
+  <path class="ink" d="M1096 258 L1286 258 L1316 288 L1316 444 L1096 444 Z" fill="#fffdf6"/>
+  <path class="thin" d="M1286 258 L1286 288 L1316 288"/>
+</g>
+<text class="body" x="1112" y="292">world.json</text>
+<path class="thin" d="M1110 304 L1270 304" filter="url(#rough)"/>
+<text class="small" x="1112" y="340">seed 12345</text>
+<text class="small" x="1112" y="374">pieces · in build order</text>
+<text class="small" x="1112" y="408">terrain edits</text>
+
+<!-- load / save arrows -->
+<path class="ink" d="M1322 316 C 1360 306, 1400 306, 1436 318" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="small" x="1334" y="296">load on start</text>
+<path class="ink" d="M1436 400 C 1400 412, 1360 412, 1324 400" marker-end="url(#head)" filter="url(#rough)"/>
+<text class="small" x="1338" y="440">save on stop</text>
+<text class="small" x="1338" y="464">or save key</text>
+
+<!-- chunks: loaded rebuilds, unvisited waits -->
+<g filter="url(#rough)">
+  <rect x="1096" y="500" width="64" height="64" fill="#9cc78a" stroke="#2a2622" stroke-width="1.8"/>
+  <rect x="1160" y="500" width="64" height="64" fill="#9cc78a" stroke="#2a2622" stroke-width="1.8"/>
+  <rect x="1224" y="500" width="64" height="64" fill="#e2ddd2" stroke="#2a2622" stroke-width="1.8"/>
+  <rect x="1096" y="564" width="64" height="64" fill="#e2ddd2" stroke="#2a2622" stroke-width="1.8"/>
+  <rect x="1160" y="564" width="64" height="64" fill="#9cc78a" stroke="#2a2622" stroke-width="1.8"/>
+  <rect x="1224" y="564" width="64" height="64" fill="#e2ddd2" stroke="#2a2622" stroke-width="1.8"/>
+  <rect x="1112" y="526" width="14" height="14" fill="#d9a66b" stroke="#2a2622" stroke-width="1.2"/>
+  <rect x="1126" y="526" width="14" height="14" fill="#d9a66b" stroke="#2a2622" stroke-width="1.2"/>
+  <rect x="1180" y="586" width="14" height="14" fill="#d9a66b" stroke="#2a2622" stroke-width="1.2"/>
+  <rect x="1244" y="526" width="14" height="14" fill="none" stroke="#2a2622" stroke-width="1.2" stroke-dasharray="3 3"/>
+</g>
+<text class="small" x="1306" y="526">green: loaded,</text>
+<text class="small" x="1306" y="550">pieces rebuilt</text>
+<text class="small" x="1306" y="586">grey: not visited,</text>
+<text class="small" x="1306" y="610">pieces wait (still saved)</text>
+
+<text class="small" x="1094" y="672">rebuilt with the normal build code, so the</text>
+<text class="small" x="1094" y="698">records reach every client and late joiners</text>
+<text class="small" x="1094" y="740">write a .tmp file, then swap: crash-safe</text>
+<text class="small" x="1094" y="782">load key: only into an empty world, same seed</text>
+
+<!-- ============================ STICKY NOTES ============================ -->
+<g filter="url(#rough)">
+  <rect x="96" y="852" width="420" height="112" fill="#f9e27d" transform="rotate(-2 306 908)"/>
+  <rect x="590" y="852" width="420" height="112" fill="#f6b8c1" transform="rotate(1.5 800 908)"/>
+  <rect x="1084" y="852" width="420" height="112" fill="#bfe0f2" transform="rotate(-1 1294 908)"/>
+</g>
+<g transform="rotate(-2 306 908)">
+  <text class="head" x="120" y="896">A world in one file</text>
+  <text class="body" x="120" y="938">seed + pieces + terrain edits</text>
+</g>
+<g transform="rotate(1.5 800 908)">
+  <text class="head" x="614" y="896">Building stays, inventory resets</text>
+  <text class="body" x="614" y="938">no login yet = no stable "you"</text>
+</g>
+<g transform="rotate(-1 1294 908)">
+  <text class="head" x="1108" y="890">Next up</text>
+  <text class="small" x="1108" y="922">graph around every player · authenticator</text>
+  <text class="small" x="1108" y="948">dedicated server build · prediction</text>
+</g>
+<!-- tape -->
+<g opacity="0.55">
+  <rect x="270" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-6 307 851)"/>
+  <rect x="764" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(4 801 851)"/>
+  <rect x="1258" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-3 1295 851)"/>
+</g>
+</svg>
