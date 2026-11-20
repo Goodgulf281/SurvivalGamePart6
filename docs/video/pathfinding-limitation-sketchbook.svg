@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img">
+<title>Known limitation: one pathfinding graph</title>
+<desc>Hand-drawn diagram of the Phase 5 limitation. The server's pathfinding graph is a 9 by 9 chunk square (load radius 3 plus 1 chunk margin each way) centred on one player: the host's own player, or on a dedicated server the first player to join. Terrain streams around every player, so a client 9 km away has terrain loaded around it, but NPCs there have no graph and cannot path. Side effect: while any loaded chunk lies outside the graph, every new chunk load makes GraphNeedsResize true and triggers a full rebuild centred on the same player, which still does not cover it; with a streaming radius of 3 this can start when players are about 2 km apart. Fix ideas: a graph around every streaming target, or bounds that cover all players up to the 8192 node cap.</desc>
+<defs>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&amp;display=swap');
+    text{font-family:'Caveat','Patrick Hand','Comic Sans MS',cursive;fill:#2a2622}
+    .title{font-size:58px;font-weight:700}
+    .sub{font-size:30px;fill:#5b544b}
+    .head{font-size:36px;font-weight:700}
+    .body{font-size:26px}
+    .small{font-size:22px;fill:#4a443d}
+    .ink{fill:none;stroke:#2a2622;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+    .thin{fill:none;stroke:#2a2622;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .dash{stroke-dasharray:7 7}
+    .red{fill:#b8473a}.green{fill:#3f7d4a}.blue{fill:#2f5f8f}
+  </style>
+
+  <!-- Wobbly ink: displaces strokes a little so lines look hand-drawn.
+       The filter region is the whole page (userSpaceOnUse): a percentage region is
+       sized from the bounding box, which is zero for straight horizontal or vertical
+       lines and would clip them away. -->
+  <filter id="rough" filterUnits="userSpaceOnUse" x="0" y="0" width="1600" height="1000">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="9" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="3"/>
+  </filter>
+  <!-- Watercolor wash: blobby edges -->
+  <filter id="wash" filterUnits="userSpaceOnUse" x="0" y="0" width="1600" height="1000">
+    <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="3" seed="21" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="16"/>
+  </filter>
+  <!-- Squared sketchbook paper -->
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0 L0 0 0 32" fill="none" stroke="#d7e1ea" stroke-width="1"/>
+  </pattern>
+  <!-- Terrain chunks on the map: 1 chunk = 1 km = 56 px -->
+  <pattern id="chunks" x="70" y="190" width="56" height="56" patternUnits="userSpaceOnUse">
+    <path d="M56 0 L0 0 0 56" fill="none" stroke="#b9b2a4" stroke-width="1.2"/>
+  </pattern>
+  <!-- Pathfinding nodes inside the graph -->
+  <pattern id="nodes" width="8" height="8" patternUnits="userSpaceOnUse">
+    <path d="M8 0 L0 0 0 8" fill="none" stroke="#6e6a8f" stroke-width="0.6"/>
+  </pattern>
+  <!-- Hand-drawn arrow head -->
+  <marker id="head" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+    <path d="M1.5 1.5 L10.5 6 L2 10.8" fill="none" stroke="#2a2622" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <clipPath id="map"><rect x="70" y="190" width="952" height="616" rx="10"/></clipPath>
+</defs>
+
+<!-- Paper -->
+<rect width="1600" height="1000" fill="#f7f2e6"/>
+<rect width="1600" height="1000" fill="url(#grid)"/>
+<line x1="34" y1="0" x2="34" y2="1000" stroke="#e7b3a8" stroke-width="2"/>
+<!-- Spiral binding -->
+<g class="thin" filter="url(#rough)">
+  <circle cx="200" cy="18" r="9"/><circle cx="360" cy="18" r="9"/><circle cx="520" cy="18" r="9"/><circle cx="680" cy="18" r="9"/>
+  <circle cx="840" cy="18" r="9"/><circle cx="1000" cy="18" r="9"/><circle cx="1160" cy="18" r="9"/><circle cx="1320" cy="18" r="9"/><circle cx="1480" cy="18" r="9"/>
+</g>
+
+<!-- Title -->
+<path d="M70 98 C 330 112, 640 90, 900 102" fill="none" stroke="#e58b7f" stroke-width="22" stroke-linecap="round" opacity="0.45" filter="url(#wash)"/>
+<text class="title" x="70" y="88">Known limitation · one graph</text>
+<text class="sub" x="72" y="132">phase 5: the server's pathfinding graph follows only one player</text>
+<text class="small" x="1250" y="82">terrain streams around everyone,</text>
+<text class="small" x="1250" y="110">the graph around just one</text>
+<path class="thin" d="M1244 120 C 1320 128, 1420 116, 1530 122" filter="url(#rough)"/>
+
+<!-- ============================ MAP ============================ -->
+<g clip-path="url(#map)">
+  <rect x="70" y="190" width="952" height="616" fill="#efe7d4"/>
+  <rect x="70" y="190" width="952" height="616" fill="url(#chunks)"/>
+
+  <!-- the graph: 9 x 9 chunks around the host's chunk (cols 0-8, rows 1-9) -->
+  <rect x="78" y="252" width="490" height="490" fill="#a99be0" opacity="0.42" filter="url(#wash)"/>
+  <rect x="70" y="246" width="504" height="504" fill="url(#nodes)" opacity="0.55"/>
+
+  <!-- streaming circles (load radius 3 chunks) -->
+  <circle cx="322" cy="498" r="176" fill="#9cc78a" opacity="0.28" filter="url(#wash)"/>
+  <circle cx="826" cy="498" r="176" fill="#9cc78a" opacity="0.28" filter="url(#wash)"/>
+</g>
+<rect class="ink" x="70" y="190" width="952" height="616" rx="10" filter="url(#rough)"/>
+<rect class="ink" x="70" y="246" width="504" height="504" filter="url(#rough)" stroke="#5b4fb0"/>
+<g filter="url(#rough)">
+  <circle class="thin dash" cx="322" cy="498" r="176"/>
+  <circle class="thin dash" cx="826" cy="498" r="176"/>
+</g>
+
+<!-- host player and an NPC with a path -->
+<g filter="url(#rough)">
+  <circle cx="322" cy="498" r="10" fill="#2f5f8f" stroke="#2a2622" stroke-width="1.6"/>
+  <path d="M214 418 C 214 392, 250 392, 250 418 L250 436 L214 436 Z" fill="#a99be0" stroke="#2a2622" stroke-width="1.8"/>
+  <circle cx="226" cy="414" r="3" fill="#2a2622"/><circle cx="238" cy="414" r="3" fill="#2a2622"/>
+</g>
+<path d="M254 432 C 280 450, 296 468, 310 486" fill="none" stroke="#3f7d4a" stroke-width="3" stroke-dasharray="2 6" stroke-linecap="round"/>
+<text class="body" x="340" y="526">host</text>
+<text class="small" x="176" y="380">NPC: path ✓</text>
+
+<!-- far client and a lost NPC -->
+<g filter="url(#rough)">
+  <circle cx="826" cy="498" r="10" fill="#b8473a" stroke="#2a2622" stroke-width="1.6"/>
+  <path d="M884 420 C 884 394, 920 394, 920 420 L920 438 L884 438 Z" fill="#a99be0" stroke="#2a2622" stroke-width="1.8"/>
+  <circle cx="896" cy="416" r="3" fill="#2a2622"/><circle cx="908" cy="416" r="3" fill="#2a2622"/>
+</g>
+<text class="head" x="926" y="414">?</text>
+<text class="body" x="784" y="530">client</text>
+<text class="small red" x="836" y="372">NPC: no graph</text>
+
+<!-- distance between the players -->
+<path class="thin" d="M336 640 L812 640" marker-start="url(#head)" marker-end="url(#head)" filter="url(#rough)"/>
+<rect x="500" y="620" width="148" height="38" fill="#efe7d4"/>
+<text class="body" x="512" y="649">9 km apart</text>
+
+<!-- map labels -->
+<rect x="86" y="258" width="290" height="34" rx="4" fill="#f7f2e6" opacity="0.85"/>
+<text class="body" x="94" y="284">the graph: 9 × 9 chunks</text>
+<text class="small" x="94" y="314">load radius 3 + 1 margin each way</text>
+<text class="small" x="664" y="716">terrain streams here too…</text>
+<text class="body red" x="664" y="746">…but there's no graph</text>
+<text class="small" x="82" y="790">1 square = 1 chunk = 1 km</text>
+<text class="small" x="82" y="232">green circles: what streaming keeps loaded around each player</text>
+
+<!-- ============================ RIGHT COLUMN ============================ -->
+<rect x="1058" y="196" width="484" height="150" rx="10" fill="#b9d3ea" opacity="0.4" filter="url(#wash)"/>
+<rect class="ink" x="1050" y="188" width="490" height="160" rx="12" filter="url(#rough)"/>
+<text class="head" x="1074" y="232">Whose graph?</text>
+<text class="small" x="1074" y="266">Player() = the streaming controller's primary target:</text>
+<text class="body" x="1074" y="300">host → the host's own player</text>
+<text class="body" x="1074" y="332">dedicated server → first player in</text>
+
+<rect x="1058" y="374" width="484" height="208" rx="10" fill="#f0a99b" opacity="0.35" filter="url(#wash)"/>
+<rect class="ink" x="1050" y="366" width="490" height="218" rx="12" filter="url(#rough)"/>
+<text class="head" x="1074" y="410">Side effect: rebuild loop</text>
+<text class="small" x="1074" y="444">a loaded chunk outside the graph makes</text>
+<text class="small" x="1074" y="470">GraphNeedsResize() true → full rebuild,</text>
+<text class="small" x="1074" y="496">centred on the same player → still outside</text>
+<text class="small" x="1074" y="522">→ the next chunk load rebuilds again</text>
+<text class="body red" x="1074" y="560">starts at only ~2 km apart</text>
+<path class="thin" d="M1340 548 C 1380 540, 1420 548, 1500 540" filter="url(#rough)" stroke="#b8473a"/>
+
+<rect x="1058" y="610" width="484" height="190" rx="10" fill="#9cc78a" opacity="0.38" filter="url(#wash)"/>
+<rect class="ink" x="1050" y="602" width="490" height="200" rx="12" filter="url(#rough)"/>
+<text class="head" x="1074" y="646">Fix ideas</text>
+<text class="body" x="1074" y="684">① a graph per streaming target,</text>
+<text class="small" x="1104" y="710">just like terrain streaming does</text>
+<text class="body" x="1074" y="748">② or bounds around all players</text>
+<text class="small" x="1104" y="774">capped at 8192 nodes ≈ 16 km at 2 m</text>
+
+<!-- ============================ STICKY NOTES ============================ -->
+<g filter="url(#rough)">
+  <rect x="96" y="852" width="420" height="112" fill="#f9e27d" transform="rotate(-2 306 908)"/>
+  <rect x="590" y="852" width="420" height="112" fill="#f6b8c1" transform="rotate(1.5 800 908)"/>
+  <rect x="1084" y="852" width="420" height="112" fill="#bfe0f2" transform="rotate(-1 1294 908)"/>
+</g>
+<g transform="rotate(-2 306 908)">
+  <text class="head" x="120" y="896">Fine when together</text>
+  <text class="body" x="120" y="938">host + nearby players: all good</text>
+</g>
+<g transform="rotate(1.5 800 908)">
+  <text class="head" x="614" y="896">Breaks when split up</text>
+  <text class="body" x="614" y="938">NPCs near far players can't path</text>
+</g>
+<g transform="rotate(-1 1294 908)">
+  <text class="head" x="1108" y="890">Where in the code</text>
+  <text class="small" x="1108" y="922">TerrainGraphIntegration</text>
+  <text class="small" x="1108" y="948">BuildOrResizeGraph() · GraphNeedsResize()</text>
+</g>
+<!-- tape -->
+<g opacity="0.55">
+  <rect x="270" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-6 307 851)"/>
+  <rect x="764" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(4 801 851)"/>
+  <rect x="1258" y="840" width="74" height="22" fill="#e9e1cc" transform="rotate(-3 1295 851)"/>
+</g>
+</svg>
